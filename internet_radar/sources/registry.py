@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from internet_radar.storage.models import SourceDefinition
+
+
+def _source(
+    name: str,
+    category: str,
+    kind: str,
+    url: str,
+    *,
+    auth: bool = False,
+    enabled: bool = False,
+    reliability: str = "medium",
+    notes: str = "",
+) -> SourceDefinition:
+    return SourceDefinition(
+        name=name,
+        category=category,  # type: ignore[arg-type]
+        kind=kind,
+        url=url,
+        requires_auth=auth,
+        default_enabled=enabled,
+        reliability=reliability,  # type: ignore[arg-type]
+        notes=notes,
+    )
+
+
+SOURCE_REGISTRY: list[SourceDefinition] = [
+    _source("GitHub Search", "code", "api", "https://api.github.com/search/repositories", enabled=True, reliability="high"),
+    _source("GitHub Trending", "code", "scrape", "https://github.com/trending", enabled=True),
+    _source("GitHub GraphQL", "code", "api", "https://api.github.com/graphql", auth=True),
+    _source("PyPI", "code", "api", "https://pypi.org/pypi/{package}/json", enabled=True, reliability="high"),
+    _source("npm Registry", "code", "api", "https://registry.npmjs.org/{package}", enabled=True, reliability="high"),
+    _source("crates.io", "code", "api", "https://crates.io/api/v1/crates", enabled=True),
+    _source("Libraries.io", "code", "api", "https://libraries.io/api", auth=True),
+    _source("Reddit API", "social", "api", "https://oauth.reddit.com", auth=True),
+    _source("Reddit JSON", "social", "json", "https://www.reddit.com/r/{subreddit}/hot.json", enabled=True),
+    _source("Hacker News", "social", "api", "https://hacker-news.firebaseio.com/v0", enabled=True, reliability="high"),
+    _source("HN Algolia", "social", "api", "https://hn.algolia.com/api/v1/search", enabled=True, reliability="high"),
+    _source("Bluesky", "social", "api", "https://public.api.bsky.app", enabled=True),
+    _source("Mastodon", "social", "api", "https://mastodon.social/api/v1", enabled=True),
+    _source("Nitter", "social", "scrape", "https://nitter.net", reliability="experimental"),
+    _source("Discord Monitor", "social", "webhook", "https://discord.com/developers/docs", auth=True),
+    _source("Tech RSS", "news", "rss", "config/rss_feeds.yaml", enabled=True, reliability="high"),
+    _source("Dev.to", "news", "api", "https://dev.to/api/articles", enabled=True, reliability="high"),
+    _source("Hashnode", "news", "graphql", "https://gql.hashnode.com", enabled=True),
+    _source("Lobsters", "news", "json", "https://lobste.rs/hottest.json", enabled=True),
+    _source("Product Hunt", "news", "graphql", "https://api.producthunt.com/v2/api/graphql", auth=True),
+    _source("TLDR Newsletter", "news", "scrape", "https://tldr.tech", enabled=True),
+    _source("RemoteOK", "jobs", "api", "https://remoteok.com/api", enabled=True, reliability="high"),
+    _source("Adzuna", "jobs", "api", "https://api.adzuna.com/v1/api/jobs", auth=True),
+    _source("The Muse", "jobs", "api", "https://www.themuse.com/api/public/jobs", enabled=True),
+    _source("Arbeitnow", "jobs", "api", "https://www.arbeitnow.com/api/job-board-api", enabled=True),
+    _source("YC Jobs", "jobs", "scrape", "https://www.ycombinator.com/jobs", enabled=True),
+    _source("Wellfound", "jobs", "scrape", "https://wellfound.com/jobs", reliability="experimental"),
+    _source("Career Page Watcher", "jobs", "watcher", "config/career_pages.yaml"),
+    _source("Devpost", "hackathons", "scrape", "https://devpost.com/hackathons", enabled=True),
+    _source("Unstop", "hackathons", "scrape", "https://unstop.com/hackathons", reliability="experimental"),
+    _source("MLH", "hackathons", "calendar", "https://mlh.io/seasons", enabled=True),
+    _source("HackerEarth", "hackathons", "api", "https://www.hackerearth.com/challenges/", auth=True),
+    _source("Codeforces", "hackathons", "api", "https://codeforces.com/api/contest.list", enabled=True),
+    _source("LeetCode Contests", "hackathons", "graphql", "https://leetcode.com/graphql", enabled=True),
+    _source("arXiv", "research", "api", "https://export.arxiv.org/api/query", enabled=True, reliability="high"),
+    _source("OpenAlex", "research", "api", "https://api.openalex.org/works", enabled=True, reliability="high"),
+    _source("Semantic Scholar", "research", "api", "https://api.semanticscholar.org/graph/v1", auth=True),
+    _source("Wikipedia Pageviews", "research", "api", "https://wikimedia.org/api/rest_v1/metrics/pageviews", enabled=True),
+    _source("Papers With Code", "research", "api", "https://paperswithcode.com/api/v1", enabled=True),
+    _source("Crunchbase", "finance", "api", "https://api.crunchbase.com/api/v4", auth=True),
+    _source("YC Companies", "finance", "json", "https://www.ycombinator.com/companies", enabled=True),
+    _source("SEC EDGAR", "finance", "api", "https://data.sec.gov", enabled=True),
+    _source("Yahoo Finance", "finance", "api", "https://query1.finance.yahoo.com", enabled=True),
+    _source("CoinGecko", "finance", "api", "https://api.coingecko.com/api/v3", enabled=True),
+    _source("Alpha Vantage", "finance", "api", "https://www.alphavantage.co/query", auth=True),
+    _source("DuckDuckGo", "search", "library", "https://duckduckgo.com", enabled=True),
+    _source("Brave Search", "search", "api", "https://api.search.brave.com/res/v1/web/search", auth=True),
+    _source("Tavily", "search", "api", "https://api.tavily.com/search", auth=True),
+    _source("Wayback Machine", "search", "api", "https://archive.org/wayback/available", enabled=True),
+    _source("Google Trends", "search", "library", "https://trends.google.com", enabled=True),
+    _source("iTunes App Store", "app_stores", "api", "https://itunes.apple.com/search", enabled=True),
+    _source("Google Play", "app_stores", "scrape", "https://play.google.com/store", enabled=True),
+    _source("Steam", "app_stores", "api", "https://store.steampowered.com/api", enabled=True),
+    _source("YouTube Search", "social", "api", "https://www.googleapis.com/youtube/v3/search", auth=True),
+    _source("Stack Overflow", "social", "api", "https://api.stackexchange.com/2.3", enabled=True),
+    _source("Kaggle Datasets", "research", "api", "https://www.kaggle.com/api", auth=True),
+    _source("Hugging Face Models", "research", "api", "https://huggingface.co/api/models", enabled=True),
+    _source("Hugging Face Papers", "research", "rss", "https://huggingface.co/papers", enabled=True),
+    _source("GitLab Explore", "code", "api", "https://gitlab.com/api/v4/projects", enabled=True),
+    _source("Bitbucket Search", "code", "api", "https://bitbucket.org/repo/all", reliability="experimental"),
+    _source("OpenCollective", "finance", "api", "https://api.opencollective.com/graphql/v2", enabled=True),
+    _source("Indie Hackers", "news", "rss", "https://www.indiehackers.com/feed", enabled=True),
+    _source("MCP Servers Directory", "code", "catalog", "https://github.com/modelcontextprotocol/servers", enabled=True),
+    _source("Conference RSS", "research", "rss", "config/rss_feeds.yaml", enabled=True),
+    _source("Levels.fyi Search", "jobs", "search", "https://www.levels.fyi", reliability="experimental"),
+    _source("Company Engineering Blogs", "news", "rss", "config/rss_feeds.yaml", enabled=True),
+]
+
+
+def enabled_sources() -> list[SourceDefinition]:
+    return [source for source in SOURCE_REGISTRY if source.default_enabled]

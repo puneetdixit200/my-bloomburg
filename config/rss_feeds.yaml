@@ -1,0 +1,11 @@
+feeds:
+  - name: Hacker News
+    url: https://news.ycombinator.com/rss
+  - name: Dev.to AI
+    url: https://dev.to/feed/tag/ai
+  - name: GitHub Blog
+    url: https://github.blog/feed/
+  - name: OpenAI Blog
+    url: https://openai.com/news/rss.xml
+  - name: Hugging Face Blog
+    url: https://huggingface.co/blog/feed.xml

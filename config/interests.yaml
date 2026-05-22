@@ -1,0 +1,18 @@
+profile:
+  skills:
+    - python
+    - ai
+    - streamlit
+    - automation
+  interests:
+    - browser agents
+    - local llm
+    - mcp
+    - internships
+    - hackathons
+  goals:
+    - learn high-demand skills early
+    - find internships with low competition
+    - spot startup gaps from user pain
+  blocked_topics: []
+  alert_threshold: 80

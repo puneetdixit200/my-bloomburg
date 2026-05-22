@@ -1,0 +1,51 @@
+defaults:
+  use_live_network: false
+  fallback_to_samples: true
+  request_timeout_seconds: 10
+
+enabled_no_key_sources:
+  - GitHub Search
+  - GitHub Trending
+  - PyPI
+  - npm Registry
+  - crates.io
+  - Reddit JSON
+  - Hacker News
+  - HN Algolia
+  - Bluesky
+  - Mastodon
+  - Tech RSS
+  - Dev.to
+  - Lobsters
+  - RemoteOK
+  - The Muse
+  - Arbeitnow
+  - MLH
+  - Codeforces
+  - LeetCode Contests
+  - arXiv
+  - OpenAlex
+  - Wikipedia Pageviews
+  - Papers With Code
+  - YC Companies
+  - SEC EDGAR
+  - Yahoo Finance
+  - CoinGecko
+  - DuckDuckGo
+  - Wayback Machine
+  - Google Trends
+  - iTunes App Store
+  - Google Play
+  - Steam
+
+optional_keyed_sources:
+  - GitHub GraphQL
+  - Reddit API
+  - Product Hunt
+  - Adzuna
+  - Brave Search
+  - Tavily
+  - Crunchbase
+  - Semantic Scholar
+  - YouTube Search
+  - Kaggle Datasets

@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+import os
+
+import pandas as pd
+import streamlit as st
+
+from internet_radar.dashboard_data import PAGE_DEFINITIONS, build_dashboard_payload
+from internet_radar.pipeline import run_radar_once
+from internet_radar.sources.registry import SOURCE_REGISTRY, enabled_sources
+from internet_radar.storage.models import SignalRecord
+
+
+def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "score": signal.score,
+                "topic": signal.topic,
+                "title": signal.title,
+                "source": signal.source,
+                "category": signal.category,
+                "url": signal.url,
+            }
+            for signal in signals
+        ]
+    )
+
+
+def render_page(page_key: str, page_payload: dict[str, object]) -> None:
+    st.subheader(str(page_payload["title"]))
+    st.caption(str(page_payload["description"]))
+    signals = list(page_payload.get("signals", []))
+    if signals:
+        st.dataframe(_signals_to_frame(signals), width="stretch", hide_index=True)
+    else:
+        st.info("No signals for this view yet. Run a live collection or adjust source settings.")
+
+
+def render_dashboard(payload: dict[str, dict[str, object]]) -> None:
+    top = payload["briefing"]
+    cols = st.columns(4)
+    cols[0].metric("Active sources", int(top["active_sources"]))
+    cols[1].metric("Signals", int(top["signals_24h"]))
+    cols[2].metric("Registered sources", len(SOURCE_REGISTRY))
+    cols[3].metric("Enabled by default", len(enabled_sources()))
+
+    st.write(f"LLM route: `{top['llm_status']}`")
+    tabs = st.tabs([page.title for page in PAGE_DEFINITIONS])
+    for tab, page in zip(tabs, PAGE_DEFINITIONS, strict=True):
+        with tab:
+            render_page(page.key, payload[page.key])
+
+
+def render_page_entry(page_key: str) -> None:
+    page = next((definition for definition in PAGE_DEFINITIONS if definition.key == page_key), PAGE_DEFINITIONS[0])
+    st.set_page_config(page_title=f"Internet Radar v2 - {page.title}", layout="wide")
+    st.title(page.title)
+    payload = load_payload(use_live_network=os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1")
+    render_page(page.key, payload[page.key])
+
+
+def load_payload(use_live_network: bool = False) -> dict[str, dict[str, object]]:
+    briefing = run_radar_once(use_live_network=use_live_network)
+    return build_dashboard_payload(
+        briefing.top_signals,
+        active_sources=briefing.active_sources,
+        llm_status=briefing.llm_status,
+    )
+
+
+def main() -> None:
+    st.set_page_config(page_title="Internet Radar v2", layout="wide")
+    st.title("Internet Radar v2")
+    st.caption("Local-first signal intelligence across code, social, news, jobs, research, finance, search, and app stores.")
+
+    with st.sidebar:
+        st.header("Collection")
+        default_live = os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1"
+        use_live = st.toggle("Use live network collectors", value=default_live)
+        st.caption("Off uses deterministic sample signals. On calls no-key public APIs and falls back on errors.")
+
+    render_dashboard(load_payload(use_live_network=use_live))
+
+
+if __name__ == "__main__":
+    main()
