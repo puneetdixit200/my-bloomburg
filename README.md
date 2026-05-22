@@ -9,6 +9,7 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 - Deterministic sample fallback so the app runs without API keys or network.
 - SQLite persistence in `data/radar.sqlite`.
 - Cross-source validation, deduplication, scoring, and local-first LLM routing.
+- Special intelligence modules for abandoned-tool opportunities, conference topic radar, salary velocity, and early wave prediction.
 - Ollama integration with installed local models such as `qwen2.5:0.5b`; rule fallback when Ollama is unavailable.
 - Streamlit dashboard with all 13 architecture pages.
 - Pytest coverage for pipeline, storage, scoring, collectors, LLM routing, dashboard smoke paths, and Streamlit rendering.

@@ -360,4 +360,5 @@ def test_default_live_collectors_include_no_key_second_wave():
         "CoinGecko",
         "iTunes App Store",
         "Steam",
+        "Special Intelligence",
     } <= names

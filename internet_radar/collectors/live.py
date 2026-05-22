@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from internet_radar.collectors.base import HTTPCollector
+from internet_radar.special.radar import build_special_signals
 from internet_radar.storage.models import SignalRecord
 
 
@@ -681,6 +682,14 @@ class SteamCollector(HTTPCollector):
             return sample_signals("app_stores")
 
 
+class SpecialIntelligenceCollector:
+    name = "Special Intelligence"
+    category = "mixed"
+
+    def collect(self) -> list[SignalRecord]:
+        return build_special_signals()
+
+
 def default_collectors(use_live_network: bool = True) -> list[object]:
     if not use_live_network:
         return [SampleCollector()]
@@ -701,6 +710,7 @@ def default_collectors(use_live_network: bool = True) -> list[object]:
         ITunesCollector(),
         SteamCollector(),
         PackageCollector(),
+        SpecialIntelligenceCollector(),
     ]
 
 
@@ -712,6 +722,7 @@ class SampleCollector:
         records: list[SignalRecord] = []
         for category in ["code", "social", "news", "jobs", "hackathons", "research", "finance", "app_stores"]:
             records.extend(sample_signals(category))
+        records.extend(build_special_signals())
         return records
 
 
