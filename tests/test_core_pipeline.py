@@ -254,3 +254,110 @@ def test_sample_collectors_parse_representative_payloads():
     assert devto[0].category == "news"
     assert remoteok[0].category == "jobs"
     assert arxiv[0].source == "arXiv"
+
+
+def test_second_wave_no_key_collectors_parse_representative_payloads():
+    from internet_radar.collectors.live import (
+        parse_arbeitnow_jobs,
+        parse_codeforces_contests,
+        parse_coingecko_trending,
+        parse_itunes_results,
+        parse_lobsters_stories,
+        parse_npm_package,
+        parse_openalex_works,
+        parse_pypi_package,
+        parse_steam_featured,
+        parse_themuse_jobs,
+        parse_wikipedia_pageviews,
+    )
+
+    assert parse_lobsters_stories(
+        [{"short_id": "abc", "title": "Local LLM agents", "url": "https://lobste.rs/s/abc", "score": 42, "comments_count": 9}]
+    )[0].source == "Lobsters"
+
+    assert parse_themuse_jobs(
+        {
+            "results": [
+                {
+                    "id": 123,
+                    "name": "AI Platform Intern",
+                    "company": {"name": "Muse Labs"},
+                    "refs": {"landing_page": "https://themuse.com/jobs/123"},
+                    "categories": [{"name": "Engineering"}],
+                }
+            ]
+        }
+    )[0].title == "AI Platform Intern at Muse Labs"
+
+    assert parse_arbeitnow_jobs(
+        {
+            "data": [
+                {
+                    "slug": "python-ai-engineer",
+                    "title": "Python AI Engineer",
+                    "company_name": "Arbeitnow Labs",
+                    "url": "https://arbeitnow.com/jobs/python-ai-engineer",
+                    "tags": ["Python", "AI"],
+                }
+            ]
+        }
+    )[0].category == "jobs"
+
+    assert parse_codeforces_contests(
+        {"result": [{"id": 10, "name": "Codeforces Round AI", "phase": "BEFORE", "relativeTimeSeconds": -3600}]}
+    )[0].category == "hackathons"
+
+    assert parse_openalex_works(
+        {
+            "results": [
+                {
+                    "id": "https://openalex.org/W1",
+                    "display_name": "Agentic Browser Automation",
+                    "cited_by_count": 34,
+                    "authorships": [{"institutions": [{"display_name": "MIT"}]}],
+                }
+            ]
+        }
+    )[0].metadata["citations"] == 34
+
+    assert parse_wikipedia_pageviews(
+        {"items": [{"article": "Large_language_model", "views": 1200}, {"article": "Large_language_model", "views": 1300}]}
+    )[0].velocity == 2500
+
+    assert parse_coingecko_trending(
+        {"coins": [{"item": {"id": "bittensor", "name": "Bittensor", "symbol": "TAO", "score": 2}}]}
+    )[0].category == "finance"
+
+    assert parse_itunes_results(
+        {"results": [{"trackId": 99, "trackName": "AI Assistant", "averageUserRating": 2.1, "trackViewUrl": "https://apps.apple.com/app/99"}]}
+    )[0].topic == "ai assistant"
+
+    assert parse_steam_featured(
+        {"large_capsules": [{"id": 1, "name": "Automation Simulator", "discount_percent": 25, "header_image": "https://cdn.example/game.jpg"}]}
+    )[0].source == "Steam"
+
+    assert parse_pypi_package("streamlit", {"info": {"summary": "Build data apps fast", "package_url": "https://pypi.org/project/streamlit/"}})[
+        0
+    ].source == "PyPI"
+
+    assert parse_npm_package(
+        "ollama", {"description": "Ollama JavaScript client", "homepage": "https://www.npmjs.com/package/ollama"}
+    )[0].source == "npm Registry"
+
+
+def test_default_live_collectors_include_no_key_second_wave():
+    from internet_radar.collectors.live import default_collectors
+
+    names = {collector.name for collector in default_collectors(use_live_network=True)}
+
+    assert {
+        "Lobsters",
+        "The Muse",
+        "Arbeitnow",
+        "Codeforces",
+        "OpenAlex",
+        "Wikipedia Pageviews",
+        "CoinGecko",
+        "iTunes App Store",
+        "Steam",
+    } <= names

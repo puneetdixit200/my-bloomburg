@@ -41,6 +41,17 @@ def test_dashboard_payload_groups_signals_by_page():
     assert payload["research_radar"]["signals"][0].category == "research"
 
 
+def test_sample_payload_has_hackathon_radar_signal(tmp_path):
+    from internet_radar.dashboard_data import build_dashboard_payload
+    from internet_radar.pipeline import run_radar_once
+
+    briefing = run_radar_once(db_path=tmp_path / "radar.sqlite", use_live_network=False)
+    payload = build_dashboard_payload(briefing.top_signals, active_sources=briefing.active_sources)
+
+    assert payload["hackathon_radar"]["signals"]
+    assert payload["hackathon_radar"]["signals"][0].category == "hackathons"
+
+
 def test_streamlit_app_import_is_side_effect_safe():
     import dashboard.app as app
 
