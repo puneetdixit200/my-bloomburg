@@ -6,6 +6,8 @@ from typing import Any
 from internet_radar.alerts.alert_manager import build_alerts
 from internet_radar.brain.relevance_scorer import rank_for_profile
 from internet_radar.search.radar_search import analyze_query
+from internet_radar.signals.gap_finder import find_startup_gaps
+from internet_radar.signals.sentiment_pipeline import enrich_signals_with_sentiment, summarize_sentiment
 from internet_radar.storage.models import PageDefinition, SignalRecord, UserProfile
 
 
@@ -33,6 +35,7 @@ def build_dashboard_payload(
     profile: UserProfile | None = None,
 ) -> dict[str, dict[str, Any]]:
     by_category: dict[str, list[SignalRecord]] = defaultdict(list)
+    enrich_signals_with_sentiment(signals)
     for signal in sorted(signals, key=lambda item: item.score, reverse=True):
         by_category[signal.category].append(signal)
 
@@ -45,6 +48,7 @@ def build_dashboard_payload(
         query: analyze_query(all_signals, query, profile=profile)
         for query in suggested_queries
     }
+    gap_clusters = find_startup_gaps(all_signals)
     payload: dict[str, dict[str, Any]] = {}
     for page in PAGE_DEFINITIONS:
         if page.category == "all":
@@ -67,6 +71,9 @@ def build_dashboard_payload(
             "llm_status": llm_status,
             "personalized_signals": personalized_signals,
             "alerts": alerts,
+            "gap_clusters": gap_clusters,
+            "pain_clusters": gap_clusters,
+            "sentiment_summary": summarize_sentiment(page_signals),
             "profile": profile.model_dump(),
             "suggested_queries": suggested_queries,
             "query_analysis": query_analysis,

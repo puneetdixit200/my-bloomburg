@@ -9,6 +9,7 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 - Deterministic sample fallback so the app runs without API keys or network.
 - SQLite persistence in `data/radar.sqlite`.
 - Cross-source validation, deduplication, scoring, and local-first LLM routing.
+- Deterministic sentiment/frustration scoring and startup gap clustering for pain-heavy social and app-store signals.
 - Profile-aware relevance scoring from `config/interests.yaml`, including skills, interests, goals, blocked topics, alert threshold, and suggested Radar Search queries.
 - Architecture-style alert templates for hackathons, startup gaps, research signals, funding signals, and skill radar items, filtered by profile threshold and notification channels.
 - Scheduler job catalog for the architecture cadence map, plus smart triggers for high scores, 3-source topic spikes, and hackathon crowd jumps.

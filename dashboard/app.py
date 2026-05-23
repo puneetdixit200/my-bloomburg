@@ -29,6 +29,29 @@ def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
     )
 
 
+def _gaps_to_frame(gaps: list[object]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "score": getattr(gap, "score", 0),
+                "pain_level": getattr(gap, "pain_level", 0),
+                "complaints": getattr(gap, "complaint_count", 0),
+                "problem": getattr(gap, "problem", ""),
+                "sources": ", ".join(getattr(gap, "sources", [])),
+                "best_quote": getattr(gap, "best_quote", ""),
+                "startup_idea": getattr(gap, "startup_idea", ""),
+            }
+            for gap in gaps
+        ]
+    )
+
+
+def _sentiment_to_frame(summary: dict[str, int]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [{"sentiment": label, "signals": int(summary.get(label, 0))} for label in ["positive", "neutral", "negative"]]
+    )
+
+
 def render_page(page_key: str, page_payload: dict[str, object]) -> None:
     st.subheader(str(page_payload["title"]))
     st.caption(str(page_payload["description"]))
@@ -54,6 +77,19 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
                 st.markdown(f"**{alert.title}**")
                 st.caption(f"{alert.kind} | score {alert.score} | channels: {', '.join(alert.channels)}")
                 st.code(alert.body)
+
+    if page_key in {"startup_gaps", "app_store_pain"}:
+        gap_key = "pain_clusters" if page_key == "app_store_pain" else "gap_clusters"
+        gaps = list(page_payload.get(gap_key, []))
+        if gaps:
+            st.subheader("Pain Clusters")
+            st.dataframe(_gaps_to_frame(gaps), width="stretch", hide_index=True)
+
+    if page_key == "community_pulse":
+        summary = page_payload.get("sentiment_summary", {})
+        if isinstance(summary, dict) and any(int(value) for value in summary.values()):
+            st.subheader("Sentiment Summary")
+            st.dataframe(_sentiment_to_frame(summary), width="stretch", hide_index=True)
 
     signals = list(page_payload.get("signals", []))
     if signals:
