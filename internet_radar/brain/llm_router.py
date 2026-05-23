@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from internet_radar.brain.local_llm import OllamaClient
+from internet_radar.brain.online_llm import GeminiClient, GroqClient, OpenRouterClient
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class LLMRouter:
         return self._available_models
 
     def route(self, task: str, content_length: int) -> LLMChoice:
+        heavy_tasks = {"gap_analysis", "idea_generate", "trend_predict"}
         preferred = {
             "classify": ["phi3:mini", "qwen2.5:0.5b"],
             "sentiment": ["phi3:mini", "qwen2.5:0.5b"],
@@ -38,7 +40,7 @@ class LLMRouter:
         }.get(task, ["qwen2.5:0.5b"])
 
         if content_length > 50_000:
-            return LLMChoice(provider="online-fallback", model="gemini-1.5-flash", reason="huge context")
+            return LLMChoice(provider="gemini", model=GeminiClient.model, reason="huge context online free tier")
 
         for model in preferred:
             if model in self.available_models:
@@ -46,6 +48,11 @@ class LLMRouter:
 
         if self.available_models:
             return LLMChoice(provider="ollama", model=self.available_models[0], reason="installed local model")
+
+        if task in heavy_tasks:
+            return LLMChoice(provider="groq", model=GroqClient.model, reason="online free tier for heavy reasoning")
+        if task not in {"classify", "sentiment", "extract_keywords"}:
+            return LLMChoice(provider="openrouter", model=OpenRouterClient.model, reason="online free overflow")
 
         return LLMChoice(provider="deterministic", model="rules", reason="no local model available")
 

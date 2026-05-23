@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
+from internet_radar.brain.deep_dive import build_deep_dive
 from internet_radar.brain.relevance_scorer import score_signal_relevance
 from internet_radar.storage.models import SignalRecord, UserProfile
 
@@ -35,7 +36,12 @@ def search_signals(signals: list[SignalRecord], query: str, profile: UserProfile
     return sorted(results, key=lambda result: (result.match_score, result.signal.score), reverse=True)[:limit]
 
 
-def analyze_query(signals: list[SignalRecord], query: str, profile: UserProfile | None = None) -> dict[str, object]:
+def analyze_query(
+    signals: list[SignalRecord],
+    query: str,
+    profile: UserProfile | None = None,
+    include_deep_dive: bool = False,
+) -> dict[str, object]:
     results = search_signals(signals, query, profile=profile)
     matched_signals = [result.signal for result in results]
     categories = Counter(signal.category for signal in matched_signals)
@@ -45,7 +51,7 @@ def analyze_query(signals: list[SignalRecord], query: str, profile: UserProfile 
         for signal in matched_signals
         if profile is not None
     ]
-    return {
+    analysis: dict[str, object] = {
         "query": query,
         "matching_signals": len(matched_signals),
         "source_count": len(sources),
@@ -55,6 +61,9 @@ def analyze_query(signals: list[SignalRecord], query: str, profile: UserProfile 
         "personal_relevance": max(relevance_scores) if relevance_scores else 0,
         "top_results": [result.signal.id for result in results[:5]],
     }
+    if include_deep_dive:
+        analysis["deep_dive"] = build_deep_dive(query, matched_signals).as_dict()
+    return analysis
 
 
 def _query_terms(query: str) -> list[str]:

@@ -45,7 +45,7 @@ def build_dashboard_payload(
     alerts = build_alerts(all_signals, profile)
     suggested_queries = profile.interests[:5] or [signal.topic for signal in all_signals[:5]]
     query_analysis = {
-        query: analyze_query(all_signals, query, profile=profile)
+        query: analyze_query(all_signals, query, profile=profile, include_deep_dive=True)
         for query in suggested_queries
     }
     gap_clusters = find_startup_gaps(all_signals)
