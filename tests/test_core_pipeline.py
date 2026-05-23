@@ -196,6 +196,44 @@ def test_pipeline_runs_with_fake_collectors_and_persists(tmp_path):
     assert RadarStore(db_path).list_signals()[0].source == "Fake Collector"
 
 
+def test_pipeline_keeps_running_when_one_collector_fails(tmp_path):
+    from internet_radar.pipeline import run_radar_once
+    from internet_radar.storage.models import SignalRecord
+
+    class GoodCollector:
+        name = "Good Collector"
+        category = "code"
+
+        def collect(self):
+            return [
+                SignalRecord(
+                    id="good:1",
+                    topic="browser agents",
+                    title="Browser agents are growing",
+                    source=self.name,
+                    category=self.category,
+                    score=72,
+                )
+            ]
+
+    class BadCollector:
+        name = "Bad Collector"
+        category = "social"
+
+        def collect(self):
+            raise RuntimeError("source down")
+
+    result = run_radar_once(
+        collectors=[GoodCollector(), BadCollector()],
+        db_path=tmp_path / "radar.sqlite",
+        use_live_network=False,
+    )
+
+    assert result.signals_24h == 1
+    assert result.source_health["Good Collector"] == "ok (1)"
+    assert result.source_health["Bad Collector"] == "error: source down"
+
+
 def test_sample_collectors_parse_representative_payloads():
     from internet_radar.collectors.live import (
         parse_arxiv_feed,

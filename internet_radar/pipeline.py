@@ -5,6 +5,7 @@ from pathlib import Path
 
 from internet_radar.brain.llm_router import LLMRouter
 from internet_radar.collectors.live import default_collectors
+from internet_radar.collectors.runner import collect_from_sources
 from internet_radar.signals.deduplicator import deduplicate_signals
 from internet_radar.storage.db import RadarStore
 from internet_radar.storage.models import BriefingPayload, SignalRecord
@@ -19,17 +20,9 @@ def run_radar_once(
         use_live_network = os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1"
 
     selected_collectors = collectors or default_collectors(use_live_network=use_live_network)
-    source_health: dict[str, str] = {}
-    signals: list[SignalRecord] = []
-
-    for collector in selected_collectors:
-        name = str(getattr(collector, "name", collector.__class__.__name__))
-        try:
-            collected = collector.collect()  # type: ignore[attr-defined]
-            signals.extend(collected)
-            source_health[name] = f"ok ({len(collected)})"
-        except Exception as exc:
-            source_health[name] = f"error: {exc}"
+    collector_results = collect_from_sources(selected_collectors)
+    source_health = {result.name: result.status for result in collector_results}
+    signals = [signal for result in collector_results for signal in result.signals]
 
     deduped = deduplicate_signals(signals)
     store = RadarStore(db_path or os.getenv("INTERNET_RADAR_DB", "data/radar.sqlite"))
