@@ -504,3 +504,124 @@ def test_google_trends_collector_uses_source_specific_fallback(monkeypatch):
     assert signal.source == "Google Trends"
     assert signal.category == "search"
     assert signal.metadata["approx_traffic"] == 50_000
+
+
+def test_keyed_architecture_collectors_parse_representative_payloads():
+    from internet_radar.collectors.live import (
+        parse_adzuna_jobs,
+        parse_brave_search_results,
+        parse_crunchbase_funding,
+        parse_hackerearth_challenges,
+        parse_libraries_io_project,
+        parse_producthunt_posts,
+        parse_semantic_scholar_papers,
+        parse_tavily_results,
+    )
+
+    assert parse_libraries_io_project(
+        "streamlit",
+        {
+            "name": "streamlit",
+            "platform": "pypi",
+            "description": "Build data apps",
+            "dependent_repos_count": 1200,
+            "stars": 36000,
+            "repository_url": "https://github.com/streamlit/streamlit",
+        },
+    )[0].source == "Libraries.io"
+
+    assert parse_producthunt_posts(
+        {
+            "data": {
+                "posts": {
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "ph-1",
+                                "name": "Agent Browser",
+                                "tagline": "Automate browser workflows",
+                                "votesCount": 420,
+                                "commentsCount": 38,
+                                "url": "https://producthunt.com/posts/agent-browser",
+                                "topics": {"edges": [{"node": {"name": "Artificial Intelligence"}}]},
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    )[0].source == "Product Hunt"
+
+    assert parse_adzuna_jobs(
+        {
+            "results": [
+                {
+                    "id": "adz-1",
+                    "title": "Machine Learning Intern",
+                    "company": {"display_name": "Signal Labs"},
+                    "location": {"display_name": "Remote"},
+                    "redirect_url": "https://adzuna.example/job",
+                    "created": "2026-05-23T00:00:00Z",
+                }
+            ]
+        }
+    )[0].category == "jobs"
+
+    assert parse_hackerearth_challenges(
+        {"challenges": [{"id": "he-1", "title": "AI Agent Hackathon", "participants": 345, "url": "https://hackerearth.example/challenge"}]}
+    )[0].source == "HackerEarth"
+
+    assert parse_semantic_scholar_papers(
+        {"data": [{"paperId": "paper-1", "title": "Agentic Browser Automation", "citationCount": 42, "year": 2026, "url": "https://semanticscholar.org/paper/1"}]}
+    )[0].metadata["citations"] == 42
+
+    assert parse_crunchbase_funding(
+        {
+            "entities": [
+                {
+                    "uuid": "round-1",
+                    "properties": {
+                        "funded_organization_identifier": {"value": "AgentOps"},
+                        "money_raised": {"value": 7_000_000},
+                        "investment_type": "seed",
+                        "announced_on": "2026-05-20",
+                    },
+                }
+            ]
+        }
+    )[0].metadata["amount"] == 7_000_000
+
+    assert parse_brave_search_results(
+        {"web": {"results": [{"title": "Browser agents pain report", "url": "https://example.com", "description": "Debugging agents is painful."}]}}
+    )[0].source == "Brave Search"
+
+    assert parse_tavily_results(
+        {"answer": "Browser agents are rising.", "results": [{"title": "Browser agents report", "url": "https://example.com", "content": "Browser agents keep rising.", "score": 0.8}]}
+    )[0].score == 90
+
+
+def test_keyed_collectors_are_added_to_live_defaults_when_credentials_exist(monkeypatch):
+    from internet_radar.collectors.live import default_collectors
+
+    monkeypatch.setenv("LIBRARIES_IO_API_KEY", "key")
+    monkeypatch.setenv("PRODUCTHUNT_TOKEN", "key")
+    monkeypatch.setenv("ADZUNA_APP_ID", "app")
+    monkeypatch.setenv("ADZUNA_APP_KEY", "key")
+    monkeypatch.setenv("HACKEREARTH_API_KEY", "key")
+    monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "key")
+    monkeypatch.setenv("CRUNCHBASE_API_KEY", "key")
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "key")
+    monkeypatch.setenv("TAVILY_API_KEY", "key")
+
+    names = {collector.name for collector in default_collectors(use_live_network=True)}
+
+    assert {
+        "Libraries.io",
+        "Product Hunt",
+        "Adzuna",
+        "HackerEarth",
+        "Semantic Scholar",
+        "Crunchbase",
+        "Brave Search",
+        "Tavily",
+    } <= names

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import html
+import os
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+import requests
 
 from internet_radar.collectors.base import HTTPCollector
 from internet_radar.special.radar import build_special_signals
@@ -12,6 +17,7 @@ from internet_radar.storage.models import SignalRecord
 
 
 DEFAULT_TOPICS = ["browser agents", "local llm", "mcp", "streamlit", "agentic ai"]
+HttpPost = Callable[..., Any]
 
 
 def infer_topic(title: str) -> str:
@@ -587,6 +593,209 @@ def parse_paperswithcode_results(payload: dict[str, Any] | list[dict[str, Any]])
     return records
 
 
+def parse_libraries_io_project(package: str, payload: dict[str, Any]) -> list[SignalRecord]:
+    name = str(payload.get("name") or package)
+    dependents = _as_int(payload.get("dependent_repos_count") or payload.get("dependents_count"))
+    stars = _as_int(payload.get("stars"))
+    return [
+        SignalRecord(
+            id=f"libraries-io:{payload.get('platform', 'package')}:{name}",
+            topic=infer_topic(name),
+            title=f"{name} cross-language dependency signal",
+            source="Libraries.io",
+            category="code",
+            url=str(payload.get("repository_url") or payload.get("package_url") or "https://libraries.io"),
+            score=min(58 + dependents // 100 + stars // 500, 100),
+            velocity=max(dependents, stars, 1),
+            summary=str(payload.get("description") or "")[:280],
+            metadata={"dependents": dependents, "stars": stars, "platform": payload.get("platform")},
+        )
+    ]
+
+
+def parse_producthunt_posts(payload: dict[str, Any]) -> list[SignalRecord]:
+    posts = (((payload.get("data") or {}).get("posts") or {}).get("edges") or [])
+    records: list[SignalRecord] = []
+    for edge in posts:
+        node = edge.get("node", edge) if isinstance(edge, dict) else {}
+        if not isinstance(node, dict):
+            continue
+        title = str(node.get("name") or "Product Hunt launch")
+        votes = _as_int(node.get("votesCount"))
+        comments = _as_int(node.get("commentsCount"))
+        topics = [
+            str(((topic_edge.get("node") or {}).get("name") or "")).strip()
+            for topic_edge in (((node.get("topics") or {}).get("edges") or []))
+            if isinstance(topic_edge, dict)
+        ]
+        records.append(
+            SignalRecord(
+                id=f"producthunt:{node.get('id', title)}",
+                topic=infer_topic(" ".join(topics) if topics else title),
+                title=f"{title} launched on Product Hunt",
+                source="Product Hunt",
+                category="news",
+                url=str(node.get("url") or ""),
+                score=min(55 + votes // 10 + comments, 100),
+                velocity=votes + comments,
+                summary=str(node.get("tagline") or "")[:280],
+                metadata={"votes": votes, "comments": comments, "topics": [topic for topic in topics if topic]},
+            )
+        )
+    return records
+
+
+def parse_adzuna_jobs(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in _payload_list(payload, "results"):
+        title = str(item.get("title") or "Adzuna job")
+        company = str((item.get("company") or {}).get("display_name") or "Unknown")
+        location = str((item.get("location") or {}).get("display_name") or "")
+        score = 76 if "intern" in title.lower() or "machine learning" in title.lower() else 62
+        records.append(
+            SignalRecord(
+                id=f"adzuna:{item.get('id', title)}",
+                topic=infer_topic(title),
+                title=f"{title} at {company}",
+                source="Adzuna",
+                category="jobs",
+                url=str(item.get("redirect_url") or ""),
+                score=score,
+                velocity=score,
+                summary=str(item.get("description") or "")[:280],
+                metadata={"company": company, "location": location, "created": item.get("created")},
+            )
+        )
+    return records
+
+
+def parse_hackerearth_challenges(payload: dict[str, Any] | list[dict[str, Any]]) -> list[SignalRecord]:
+    items = _payload_list(payload, "challenges") or _payload_list(payload, "results") or _payload_list(payload, "data")
+    records: list[SignalRecord] = []
+    for item in items:
+        title = str(item.get("title") or item.get("name") or "HackerEarth challenge")
+        participants = _as_int(item.get("participants") or item.get("registrations"))
+        records.append(
+            SignalRecord(
+                id=f"hackerearth:{item.get('id', title)}",
+                topic=infer_topic(title),
+                title=title,
+                source="HackerEarth",
+                category="hackathons",
+                url=str(item.get("url") or item.get("challenge_url") or "https://www.hackerearth.com/challenges/"),
+                score=min(60 + participants // 100, 100),
+                velocity=max(participants, 1),
+                metadata={"participants": participants, "starts_at": item.get("starts_at"), "ends_at": item.get("ends_at")},
+            )
+        )
+    return records
+
+
+def parse_semantic_scholar_papers(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in _payload_list(payload, "data"):
+        title = str(item.get("title") or "Semantic Scholar paper")
+        citations = _as_int(item.get("citationCount"))
+        year = _as_int(item.get("year"))
+        records.append(
+            SignalRecord(
+                id=f"semantic-scholar:{item.get('paperId', title)}",
+                topic=infer_topic(title),
+                title=title,
+                source="Semantic Scholar",
+                category="research",
+                url=str(item.get("url") or ""),
+                score=min(62 + citations // 10, 100),
+                velocity=max(citations, 1),
+                summary=str(item.get("abstract") or "")[:280],
+                metadata={"citations": citations, "year": year},
+            )
+        )
+    return records
+
+
+def parse_crunchbase_funding(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for entity in _payload_list(payload, "entities"):
+        properties = entity.get("properties", entity)
+        if not isinstance(properties, dict):
+            continue
+        org = properties.get("funded_organization_identifier") or properties.get("organization_identifier") or {}
+        company = str(org.get("value") if isinstance(org, dict) else org or "Crunchbase company")
+        amount = _money_to_int(properties.get("money_raised") or properties.get("amount_raised"))
+        round_type = str(properties.get("investment_type") or properties.get("funding_type") or "funding")
+        records.append(
+            SignalRecord(
+                id=f"crunchbase:{entity.get('uuid', company)}",
+                topic=infer_topic(company),
+                title=f"{company} raised {round_type}",
+                source="Crunchbase",
+                category="finance",
+                url=str(properties.get("web_path") or "https://www.crunchbase.com"),
+                score=min(64 + amount // 5_000_000, 100) if amount else 64,
+                velocity=amount,
+                metadata={"amount": amount, "round": round_type, "announced_on": properties.get("announced_on")},
+            )
+        )
+    return records
+
+
+def parse_brave_search_results(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for index, item in enumerate(_payload_list(payload.get("web") if isinstance(payload.get("web"), dict) else payload, "results")):
+        title = str(item.get("title") or "Brave Search result")
+        records.append(
+            SignalRecord(
+                id=f"brave:{index}:{title}",
+                topic=infer_topic(title),
+                title=title,
+                source="Brave Search",
+                category="search",
+                url=str(item.get("url") or ""),
+                score=64 + min(index, 5),
+                velocity=max(1, 8 - index),
+                summary=str(item.get("description") or "")[:280],
+            )
+        )
+    return records
+
+
+def parse_tavily_results(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    answer = str(payload.get("answer") or "")
+    for index, item in enumerate(_payload_list(payload, "results")):
+        title = str(item.get("title") or "Tavily result")
+        score = float(item.get("score") or 0)
+        records.append(
+            SignalRecord(
+                id=f"tavily:{index}:{title}",
+                topic=infer_topic(title),
+                title=title,
+                source="Tavily",
+                category="search",
+                url=str(item.get("url") or ""),
+                score=min(58 + int(score * 40), 100),
+                velocity=score,
+                summary=(str(item.get("content") or answer))[:280],
+                metadata={"answer": answer[:280] if answer else ""},
+            )
+        )
+    if not records and answer:
+        records.append(
+            SignalRecord(
+                id=f"tavily:answer:{hashlib.sha1(answer.encode('utf-8')).hexdigest()[:12]}",
+                topic=infer_topic(answer),
+                title="Tavily answer signal",
+                source="Tavily",
+                category="search",
+                score=62,
+                velocity=1,
+                summary=answer[:280],
+            )
+        )
+    return records
+
+
 def _clean_html(value: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", value)).strip()
 
@@ -613,6 +822,12 @@ def _traffic_to_int(value: str) -> int:
         return int(float(cleaned) * multiplier)
     except ValueError:
         return 0
+
+
+def _money_to_int(value: Any) -> int:
+    if isinstance(value, dict):
+        value = value.get("value") or value.get("amount") or value.get("usd")
+    return _as_int(value)
 
 
 class GitHubSearchCollector(HTTPCollector):
@@ -911,6 +1126,205 @@ class PapersWithCodeCollector(HTTPCollector):
             return sample_signals("research")
 
 
+class LibrariesIOCollector(HTTPCollector):
+    def __init__(self, package: str = "streamlit", platform: str = "pypi", api_key: str | None = None) -> None:
+        super().__init__(name="Libraries.io", category="code")
+        self.package = package
+        self.platform = platform
+        self.api_key = api_key or os.getenv("LIBRARIES_IO_API_KEY", "")
+
+    def collect(self) -> list[SignalRecord]:
+        if not self.api_key:
+            return keyed_source_fallback("Libraries.io", "code", "cross language dependencies", 58)
+        try:
+            data = self.get_json(f"https://libraries.io/api/{self.platform}/{self.package}", api_key=self.api_key)
+            return parse_libraries_io_project(self.package, data if isinstance(data, dict) else {})
+        except Exception:
+            return keyed_source_fallback("Libraries.io", "code", "cross language dependencies", 58)
+
+
+class ProductHuntCollector(HTTPCollector):
+    query = """
+    query {
+      posts(order: VOTES, first: 20) {
+        edges {
+          node {
+            id
+            name
+            tagline
+            votesCount
+            commentsCount
+            url
+            topics { edges { node { name } } }
+          }
+        }
+      }
+    }
+    """
+
+    def __init__(self, token: str | None = None, http_post: HttpPost = requests.post) -> None:
+        super().__init__(name="Product Hunt", category="news")
+        self.token = token or os.getenv("PRODUCTHUNT_TOKEN", "")
+        self.http_post = http_post
+
+    def collect(self) -> list[SignalRecord]:
+        if not self.token:
+            return keyed_source_fallback("Product Hunt", "news", "product launches", 55)
+        try:
+            response = self.http_post(
+                "https://api.producthunt.com/v2/api/graphql",
+                headers={"Authorization": f"Bearer {self.token}"},
+                json={"query": self.query},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return parse_producthunt_posts(response.json())
+        except Exception:
+            return keyed_source_fallback("Product Hunt", "news", "product launches", 55)
+
+
+class AdzunaCollector(HTTPCollector):
+    def __init__(self, query: str = "machine learning intern", country: str = "us", app_id: str | None = None, app_key: str | None = None) -> None:
+        super().__init__(name="Adzuna", category="jobs")
+        self.query = query
+        self.country = country
+        self.app_id = app_id or os.getenv("ADZUNA_APP_ID", "")
+        self.app_key = app_key or os.getenv("ADZUNA_APP_KEY", "")
+
+    def collect(self) -> list[SignalRecord]:
+        if not self.app_id or not self.app_key:
+            return keyed_source_fallback("Adzuna", "jobs", "adzuna jobs", 57)
+        try:
+            data = self.get_json(
+                f"https://api.adzuna.com/v1/api/jobs/{self.country}/search/1",
+                app_id=self.app_id,
+                app_key=self.app_key,
+                what=self.query,
+                sort_by="date",
+                results_per_page=50,
+            )
+            return parse_adzuna_jobs(data if isinstance(data, dict) else {})
+        except Exception:
+            return keyed_source_fallback("Adzuna", "jobs", "adzuna jobs", 57)
+
+
+class HackerEarthCollector(HTTPCollector):
+    def __init__(self, api_key: str | None = None) -> None:
+        super().__init__(name="HackerEarth", category="hackathons")
+        self.api_key = api_key or os.getenv("HACKEREARTH_API_KEY", "")
+
+    def collect(self) -> list[SignalRecord]:
+        if not self.api_key:
+            return keyed_source_fallback("HackerEarth", "hackathons", "hackerearth challenges", 60)
+        try:
+            data = self.get_json("https://www.hackerearth.com/chrome-extension/events/api/events/", api_key=self.api_key)
+            return parse_hackerearth_challenges(data if isinstance(data, (dict, list)) else {})
+        except Exception:
+            return keyed_source_fallback("HackerEarth", "hackathons", "hackerearth challenges", 60)
+
+
+class SemanticScholarCollector(HTTPCollector):
+    def __init__(self, query: str = "agentic browser automation", api_key: str | None = None) -> None:
+        super().__init__(name="Semantic Scholar", category="research")
+        self.query = query
+        self.api_key = api_key or os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
+
+    def collect(self) -> list[SignalRecord]:
+        if not self.api_key:
+            return keyed_source_fallback("Semantic Scholar", "research", "semantic scholar papers", 62)
+        try:
+            response = self.http_get(
+                "https://api.semanticscholar.org/graph/v1/paper/search",
+                params={
+                    "query": self.query,
+                    "limit": 20,
+                    "fields": "title,abstract,url,citationCount,year",
+                },
+                headers={"x-api-key": self.api_key, "User-Agent": "internet-radar-v2/0.1"},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return parse_semantic_scholar_papers(response.json())
+        except Exception:
+            return keyed_source_fallback("Semantic Scholar", "research", "semantic scholar papers", 62)
+
+
+class CrunchbaseCollector(HTTPCollector):
+    def __init__(self, api_key: str | None = None, http_post: HttpPost = requests.post) -> None:
+        super().__init__(name="Crunchbase", category="finance")
+        self.api_key = api_key or os.getenv("CRUNCHBASE_API_KEY", "")
+        self.http_post = http_post
+
+    def collect(self) -> list[SignalRecord]:
+        if not self.api_key:
+            return keyed_source_fallback("Crunchbase", "finance", "funding rounds", 64)
+        try:
+            response = self.http_post(
+                "https://api.crunchbase.com/api/v4/searches/funding_rounds",
+                headers={"X-cb-user-key": self.api_key},
+                json={
+                    "field_ids": ["funded_organization_identifier", "money_raised", "announced_on", "investment_type"],
+                    "order": [{"field_id": "announced_on", "sort": "desc"}],
+                    "limit": 20,
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return parse_crunchbase_funding(response.json())
+        except Exception:
+            return keyed_source_fallback("Crunchbase", "finance", "funding rounds", 64)
+
+
+class BraveSearchCollector(HTTPCollector):
+    def __init__(self, query: str = "browser agents startup pain", api_key: str | None = None) -> None:
+        super().__init__(name="Brave Search", category="search")
+        self.query = query
+        self.api_key = api_key or os.getenv("BRAVE_SEARCH_API_KEY", "")
+
+    def collect(self) -> list[SignalRecord]:
+        if not self.api_key:
+            return keyed_source_fallback("Brave Search", "search", "brave search intelligence", 58)
+        try:
+            response = self.http_get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": self.query, "count": 10},
+                headers={"X-Subscription-Token": self.api_key, "Accept": "application/json"},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return parse_brave_search_results(response.json())
+        except Exception:
+            return keyed_source_fallback("Brave Search", "search", "brave search intelligence", 58)
+
+
+class TavilyCollector(HTTPCollector):
+    def __init__(self, query: str = "browser agents startup pain", api_key: str | None = None, http_post: HttpPost = requests.post) -> None:
+        super().__init__(name="Tavily", category="search")
+        self.query = query
+        self.api_key = api_key or os.getenv("TAVILY_API_KEY", "")
+        self.http_post = http_post
+
+    def collect(self) -> list[SignalRecord]:
+        if not self.api_key:
+            return keyed_source_fallback("Tavily", "search", "ai search intelligence", 58)
+        try:
+            response = self.http_post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": self.api_key,
+                    "query": self.query,
+                    "search_depth": "advanced",
+                    "include_answer": True,
+                    "max_results": 10,
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return parse_tavily_results(response.json())
+        except Exception:
+            return keyed_source_fallback("Tavily", "search", "ai search intelligence", 58)
+
+
 class SpecialIntelligenceCollector:
     name = "Special Intelligence"
     category = "mixed"
@@ -944,6 +1358,7 @@ def default_collectors(use_live_network: bool = True) -> list[object]:
         SECEdgarCollector(),
         PapersWithCodeCollector(),
         PackageCollector(),
+        *_keyed_collectors_from_env(),
         SpecialIntelligenceCollector(),
     ]
 
@@ -974,6 +1389,43 @@ def google_trends_fallback() -> list[SignalRecord]:
             metadata={"approx_traffic": 50_000},
         )
     ]
+
+
+def keyed_source_fallback(name: str, category: str, topic: str, score: int) -> list[SignalRecord]:
+    return [
+        SignalRecord(
+            id=f"keyed-fallback:{name.lower().replace(' ', '-').replace('.', '')}",
+            topic=topic,
+            title=f"{name} keyed-source fallback signal",
+            source=name,
+            category=category,  # type: ignore[arg-type]
+            score=score,
+            velocity=max(score - 50, 1),
+            summary=f"Set the {name} API key in .env to enable live {name} collection.",
+            metadata={"requires_api_key": True},
+        )
+    ]
+
+
+def _keyed_collectors_from_env() -> list[object]:
+    collectors: list[object] = []
+    if os.getenv("LIBRARIES_IO_API_KEY"):
+        collectors.append(LibrariesIOCollector())
+    if os.getenv("PRODUCTHUNT_TOKEN"):
+        collectors.append(ProductHuntCollector())
+    if os.getenv("ADZUNA_APP_ID") and os.getenv("ADZUNA_APP_KEY"):
+        collectors.append(AdzunaCollector())
+    if os.getenv("HACKEREARTH_API_KEY"):
+        collectors.append(HackerEarthCollector())
+    if os.getenv("SEMANTIC_SCHOLAR_API_KEY"):
+        collectors.append(SemanticScholarCollector())
+    if os.getenv("CRUNCHBASE_API_KEY"):
+        collectors.append(CrunchbaseCollector())
+    if os.getenv("BRAVE_SEARCH_API_KEY"):
+        collectors.append(BraveSearchCollector())
+    if os.getenv("TAVILY_API_KEY"):
+        collectors.append(TavilyCollector())
+    return collectors
 
 
 def sample_signals(category: str) -> list[SignalRecord]:

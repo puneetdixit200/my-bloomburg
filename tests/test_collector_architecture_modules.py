@@ -95,26 +95,57 @@ def test_architecture_collector_files_exist_and_export_collector_class():
 def test_architecture_collector_wrappers_reuse_live_or_safe_fallbacks():
     from internet_radar.collectors.app_stores.appstore_collector import Collector as AppStoreCollector
     from internet_radar.collectors.code.github_collector import Collector as GitHubCollector
+    from internet_radar.collectors.code.libraries_io_collector import Collector as LibrariesIOCollector
     from internet_radar.collectors.finance.crunchbase_collector import Collector as CrunchbaseCollector
+    from internet_radar.collectors.jobs.adzuna_collector import Collector as AdzunaCollector
+    from internet_radar.collectors.news.producthunt_collector import Collector as ProductHuntCollector
     from internet_radar.collectors.search.google_trends_collector import Collector as GoogleTrendsCollector
     from internet_radar.collectors.research.arxiv_collector import Collector as ArxivCollector
+    from internet_radar.collectors.research.semantic_scholar import Collector as SemanticScholarCollector
+    from internet_radar.collectors.search.brave_search_collector import Collector as BraveSearchCollector
+    from internet_radar.collectors.search.tavily_collector import Collector as TavilyCollector
     from internet_radar.collectors.social.hackernews_search import Collector as HNSearchCollector
 
     samples = [
         GitHubCollector(use_live_network=False).collect()[0],
+        LibrariesIOCollector(use_live_network=False).collect()[0],
         HNSearchCollector(use_live_network=False).collect()[0],
+        ProductHuntCollector(use_live_network=False).collect()[0],
+        AdzunaCollector(use_live_network=False).collect()[0],
         ArxivCollector(use_live_network=False).collect()[0],
+        SemanticScholarCollector(use_live_network=False).collect()[0],
         CrunchbaseCollector(use_live_network=False).collect()[0],
+        BraveSearchCollector(use_live_network=False).collect()[0],
+        TavilyCollector(use_live_network=False).collect()[0],
         GoogleTrendsCollector(use_live_network=False).collect()[0],
         AppStoreCollector(use_live_network=False).collect()[0],
     ]
 
-    assert [sample.category for sample in samples] == ["code", "social", "research", "finance", "search", "app_stores"]
+    assert [sample.category for sample in samples] == [
+        "code",
+        "code",
+        "social",
+        "news",
+        "jobs",
+        "research",
+        "research",
+        "finance",
+        "search",
+        "search",
+        "search",
+        "app_stores",
+    ]
     assert {sample.source for sample in samples} >= {
         "GitHub Search",
+        "Libraries.io",
         "Hacker News",
+        "Product Hunt",
+        "Adzuna",
         "arXiv",
+        "Semantic Scholar",
         "Crunchbase",
+        "Brave Search",
+        "Tavily",
         "Google Trends",
         "iTunes App Store",
     }
