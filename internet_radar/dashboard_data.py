@@ -8,6 +8,7 @@ from internet_radar.brain.briefing_writer import write_daily_briefing
 from internet_radar.brain.relevance_scorer import rank_for_profile
 from internet_radar.brain.skill_recommender import recommend_skills
 from internet_radar.search.radar_search import analyze_query
+from internet_radar.signals.cross_source_multiplier import build_source_agreements
 from internet_radar.signals.gap_finder import find_startup_gaps
 from internet_radar.signals.sentiment_pipeline import enrich_signals_with_sentiment, summarize_sentiment
 from internet_radar.storage.models import PageDefinition, SignalRecord, UserProfile
@@ -53,6 +54,7 @@ def build_dashboard_payload(
     }
     gap_clusters = find_startup_gaps(all_signals)
     semantic_clusters = build_semantic_clusters(all_signals)
+    source_agreements = build_source_agreements(all_signals)
     daily_briefing = write_daily_briefing(all_signals, active_sources=active_sources, llm_status=llm_status)
     skill_recommendations = recommend_skills(all_signals, profile=profile)
     payload: dict[str, dict[str, Any]] = {}
@@ -81,6 +83,7 @@ def build_dashboard_payload(
             "gap_clusters": gap_clusters,
             "pain_clusters": gap_clusters,
             "semantic_clusters": semantic_clusters,
+            "source_agreements": source_agreements,
             "skill_recommendations": skill_recommendations,
             "sentiment_summary": summarize_sentiment(page_signals),
             "profile": profile.model_dump(),

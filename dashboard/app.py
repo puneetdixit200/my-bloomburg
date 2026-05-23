@@ -82,6 +82,22 @@ def _skill_recommendations_to_frame(recommendations: list[object]) -> pd.DataFra
     )
 
 
+def _source_agreements_to_frame(agreements: list[object]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "score": getattr(agreement, "score", 0),
+                "topic": getattr(agreement, "topic", ""),
+                "verdict": getattr(agreement, "verdict", ""),
+                "sources": f"{getattr(agreement, 'source_count', 0)}/{getattr(agreement, 'known_source_count', 0)}",
+                "multiplier": getattr(agreement, "multiplier", 1.0),
+                "source_list": ", ".join(getattr(agreement, "sources", [])),
+            }
+            for agreement in agreements
+        ]
+    )
+
+
 def render_page(page_key: str, page_payload: dict[str, object]) -> None:
     st.subheader(str(page_payload["title"]))
     st.caption(str(page_payload["description"]))
@@ -117,6 +133,12 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
         if recommendations:
             st.subheader("Learning Path")
             st.dataframe(_skill_recommendations_to_frame(recommendations), width="stretch", hide_index=True)
+
+    if page_key == "trend_velocity":
+        agreements = list(page_payload.get("source_agreements", []))
+        if agreements:
+            st.subheader("Source Agreement")
+            st.dataframe(_source_agreements_to_frame(agreements), width="stretch", hide_index=True)
 
     if page_key in {"startup_gaps", "app_store_pain"}:
         gap_key = "pain_clusters" if page_key == "app_store_pain" else "gap_clusters"
