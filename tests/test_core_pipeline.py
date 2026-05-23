@@ -367,6 +367,7 @@ def test_default_live_collectors_include_no_key_second_wave():
 def test_third_wave_no_key_collectors_parse_representative_payloads():
     from internet_radar.collectors.live import (
         parse_duckduckgo_results,
+        parse_google_trends_rss,
         parse_paperswithcode_results,
         parse_sec_submissions,
         parse_yc_companies,
@@ -400,6 +401,27 @@ def test_third_wave_no_key_collectors_parse_representative_payloads():
         """
     )[0].source == "DuckDuckGo"
 
+    google_trend = parse_google_trends_rss(
+        """<?xml version="1.0"?>
+        <rss xmlns:ht="https://trends.google.com/trends/trendingsearches/daily">
+          <channel>
+            <item>
+              <title>browser agents</title>
+              <link>https://trends.google.com/trends/explore?q=browser%20agents</link>
+              <ht:approx_traffic>200K+</ht:approx_traffic>
+              <ht:news_item>
+                <ht:news_item_title>Browser automation tools keep rising</ht:news_item_title>
+                <ht:news_item_url>https://example.com/browser-agents</ht:news_item_url>
+              </ht:news_item>
+            </item>
+          </channel>
+        </rss>
+        """
+    )[0]
+
+    assert google_trend.source == "Google Trends"
+    assert google_trend.velocity == 200_000
+
     assert parse_paperswithcode_results(
         {
             "results": [
@@ -422,7 +444,25 @@ def test_default_live_collectors_include_no_key_third_wave():
 
     assert {
         "DuckDuckGo",
+        "Google Trends",
         "YC Companies",
         "SEC EDGAR",
         "Papers With Code",
     } <= names
+
+
+def test_google_trends_collector_uses_source_specific_fallback(monkeypatch):
+    from internet_radar.collectors.live import GoogleTrendsCollector
+
+    collector = GoogleTrendsCollector()
+
+    def fail_get_text(*args, **kwargs):
+        raise RuntimeError("network unavailable")
+
+    monkeypatch.setattr(collector, "get_text", fail_get_text)
+
+    signal = collector.collect()[0]
+
+    assert signal.source == "Google Trends"
+    assert signal.category == "search"
+    assert signal.metadata["approx_traffic"] == 50_000

@@ -65,6 +65,7 @@ EXPECTED_COLLECTORS = {
         "brave_search_collector",
         "tavily_collector",
         "wayback_collector",
+        "google_trends_collector",
     ],
     "app_stores": [
         "appstore_collector",
@@ -95,6 +96,7 @@ def test_architecture_collector_wrappers_reuse_live_or_safe_fallbacks():
     from internet_radar.collectors.app_stores.appstore_collector import Collector as AppStoreCollector
     from internet_radar.collectors.code.github_collector import Collector as GitHubCollector
     from internet_radar.collectors.finance.crunchbase_collector import Collector as CrunchbaseCollector
+    from internet_radar.collectors.search.google_trends_collector import Collector as GoogleTrendsCollector
     from internet_radar.collectors.research.arxiv_collector import Collector as ArxivCollector
     from internet_radar.collectors.social.hackernews_search import Collector as HNSearchCollector
 
@@ -103,8 +105,16 @@ def test_architecture_collector_wrappers_reuse_live_or_safe_fallbacks():
         HNSearchCollector(use_live_network=False).collect()[0],
         ArxivCollector(use_live_network=False).collect()[0],
         CrunchbaseCollector(use_live_network=False).collect()[0],
+        GoogleTrendsCollector(use_live_network=False).collect()[0],
         AppStoreCollector(use_live_network=False).collect()[0],
     ]
 
-    assert [sample.category for sample in samples] == ["code", "social", "research", "finance", "app_stores"]
-    assert {sample.source for sample in samples} >= {"GitHub Search", "Hacker News", "arXiv", "Crunchbase", "iTunes App Store"}
+    assert [sample.category for sample in samples] == ["code", "social", "research", "finance", "search", "app_stores"]
+    assert {sample.source for sample in samples} >= {
+        "GitHub Search",
+        "Hacker News",
+        "arXiv",
+        "Crunchbase",
+        "Google Trends",
+        "iTunes App Store",
+    }

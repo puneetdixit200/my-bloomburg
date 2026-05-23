@@ -538,6 +538,32 @@ def parse_duckduckgo_results(text: str) -> list[SignalRecord]:
     return records
 
 
+def parse_google_trends_rss(text: str) -> list[SignalRecord]:
+    root = ET.fromstring(text)
+    records: list[SignalRecord] = []
+    for index, item in enumerate(root.findall(".//item")[:8]):
+        title = (item.findtext("title") or "Google trend").strip()
+        if not title:
+            continue
+        traffic = _traffic_to_int(_find_child_text(item, "approx_traffic"))
+        news_url = _find_child_text(item, "news_item_url") or (item.findtext("link") or "")
+        records.append(
+            SignalRecord(
+                id=f"google-trends:{index}:{title.lower()}",
+                topic=infer_topic(title),
+                title=f"{title} is trending on Google",
+                source="Google Trends",
+                category="search",
+                url=news_url,
+                score=min(62 + traffic // 50_000, 100) if traffic else 62,
+                velocity=traffic,
+                summary=_find_child_text(item, "news_item_title")[:280],
+                metadata={"approx_traffic": traffic},
+            )
+        )
+    return records
+
+
 def parse_paperswithcode_results(payload: dict[str, Any] | list[dict[str, Any]]) -> list[SignalRecord]:
     records: list[SignalRecord] = []
     for item in _payload_list(payload, "results"):
@@ -563,6 +589,30 @@ def parse_paperswithcode_results(payload: dict[str, Any] | list[dict[str, Any]])
 
 def _clean_html(value: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", value)).strip()
+
+
+def _find_child_text(element: ET.Element, local_name: str) -> str:
+    for child in element.iter():
+        if child.tag.rsplit("}", 1)[-1] == local_name and child.text:
+            return " ".join(child.text.split())
+    return ""
+
+
+def _traffic_to_int(value: str) -> int:
+    cleaned = value.upper().replace("+", "").replace(",", "").strip()
+    if not cleaned:
+        return 0
+    multiplier = 1
+    if cleaned.endswith("K"):
+        multiplier = 1_000
+        cleaned = cleaned[:-1]
+    elif cleaned.endswith("M"):
+        multiplier = 1_000_000
+        cleaned = cleaned[:-1]
+    try:
+        return int(float(cleaned) * multiplier)
+    except ValueError:
+        return 0
 
 
 class GitHubSearchCollector(HTTPCollector):
@@ -807,6 +857,20 @@ class DuckDuckGoCollector(HTTPCollector):
             return sample_signals("search")
 
 
+class GoogleTrendsCollector(HTTPCollector):
+    def __init__(self, geo: str = "US") -> None:
+        super().__init__(name="Google Trends", category="search")
+        self.geo = geo
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://trends.google.com/trending/rss", geo=self.geo)
+            records = parse_google_trends_rss(text)
+            return records or google_trends_fallback()
+        except Exception:
+            return google_trends_fallback()
+
+
 class YCCompaniesCollector(HTTPCollector):
     def __init__(self) -> None:
         super().__init__(name="YC Companies", category="finance")
@@ -875,6 +939,7 @@ def default_collectors(use_live_network: bool = True) -> list[object]:
         ITunesCollector(),
         SteamCollector(),
         DuckDuckGoCollector(),
+        GoogleTrendsCollector(),
         YCCompaniesCollector(),
         SECEdgarCollector(),
         PapersWithCodeCollector(),
@@ -893,6 +958,22 @@ class SampleCollector:
             records.extend(sample_signals(category))
         records.extend(build_special_signals())
         return records
+
+
+def google_trends_fallback() -> list[SignalRecord]:
+    return [
+        SignalRecord(
+            id="sample:search:google-trends",
+            topic="browser agents",
+            title="browser agents is rising on Google Trends",
+            source="Google Trends",
+            category="search",
+            url="https://trends.google.com/trends/explore?q=browser%20agents",
+            score=68,
+            velocity=50_000,
+            metadata={"approx_traffic": 50_000},
+        )
+    ]
 
 
 def sample_signals(category: str) -> list[SignalRecord]:
