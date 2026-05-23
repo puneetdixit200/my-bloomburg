@@ -60,6 +60,8 @@ def test_docker_compose_declares_architecture_services():
     assert "python alerts/telegram_bot.py --watch" in services["telegram-bot"]["command"]
     assert services["dashboard"]["environment"]["INTERNET_RADAR_DB"] == "/data/radar.sqlite"
     assert services["telegram-bot"]["environment"]["TELEGRAM_BOT_TOKEN"] == "${TELEGRAM_BOT_TOKEN:-}"
+    assert services["dashboard"]["environment"]["COHERE_API_KEY"] == "${COHERE_API_KEY:-}"
+    assert services["dashboard"]["environment"]["GROQ_API_KEY"] == "${GROQ_API_KEY:-}"
     assert "radar-data" in compose["volumes"]
 
 
