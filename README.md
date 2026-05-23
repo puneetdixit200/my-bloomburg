@@ -5,7 +5,7 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 ## What Works
 
 - 64+ source registry covering code, social, news, jobs, hackathons, research, finance, search, and app stores.
-- Live no-key collector layer for GitHub, Hacker News, Reddit JSON, Bluesky, Mastodon, Dev.to, Tech RSS, Hashnode, Lobsters, RemoteOK, The Muse, Arbeitnow, Codeforces, MLH, LeetCode Contests, arXiv, OpenAlex, Wikipedia Pageviews, DuckDuckGo, Wayback Machine, Google Trends, YC Companies, SEC EDGAR, Papers With Code, CoinGecko, Yahoo Finance, iTunes, Google Play, Steam, PyPI, npm, and crates.io package signals.
+- Live no-key collector layer for every enabled public registry source, including GitHub Search/Trending, GitLab, MCP Servers Directory, PyPI, npm, crates.io, HN Algolia, Reddit JSON, Bluesky, Mastodon, Stack Overflow, Dev.to, Tech RSS, Hashnode, TLDR, Lobsters, Indie Hackers, RemoteOK, The Muse, Arbeitnow, YC Jobs, Devpost, MLH, LeetCode Contests, arXiv, OpenAlex, Hugging Face, Wikipedia Pageviews, DuckDuckGo, Wayback Machine, Google Trends, YC Companies, SEC EDGAR, Papers With Code, OpenCollective, CoinGecko, Yahoo Finance, iTunes, Google Play, and Steam.
 - Credential-aware optional collectors for Libraries.io, Product Hunt, Adzuna, HackerEarth, Semantic Scholar, Crunchbase, Brave Search, and Tavily.
 - Parallel collector runner with per-source health reporting so one failing source does not stop the pipeline.
 - Collector utilities for per-source rate limiting, TTL request caching, optional proxy rotation, and HTML cleanup for scraper-style sources.

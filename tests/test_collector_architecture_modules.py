@@ -97,15 +97,21 @@ def test_architecture_collector_wrappers_reuse_live_or_safe_fallbacks():
     from internet_radar.collectors.app_stores.playstore_collector import Collector as GooglePlayCollector
     from internet_radar.collectors.code.crates_collector import Collector as CratesCollector
     from internet_radar.collectors.code.github_collector import Collector as GitHubCollector
+    from internet_radar.collectors.code.github_trending_scraper import Collector as GitHubTrendingCollector
     from internet_radar.collectors.code.libraries_io_collector import Collector as LibrariesIOCollector
+    from internet_radar.collectors.code.npm_collector import Collector as NPMCollector
+    from internet_radar.collectors.code.pypi_collector import Collector as PyPICollector
     from internet_radar.collectors.finance.crunchbase_collector import Collector as CrunchbaseCollector
     from internet_radar.collectors.finance.yfinance_collector import Collector as YahooFinanceCollector
+    from internet_radar.collectors.hackathons.devpost_scraper import Collector as DevpostCollector
     from internet_radar.collectors.hackathons.leetcode_collector import Collector as LeetCodeCollector
     from internet_radar.collectors.hackathons.mlh_scraper import Collector as MLHCollector
     from internet_radar.collectors.jobs.adzuna_collector import Collector as AdzunaCollector
+    from internet_radar.collectors.jobs.yc_jobs_scraper import Collector as YCJobsCollector
     from internet_radar.collectors.news.hashnode_collector import Collector as HashnodeCollector
     from internet_radar.collectors.news.producthunt_collector import Collector as ProductHuntCollector
     from internet_radar.collectors.news.rss_collector import Collector as RSSCollector
+    from internet_radar.collectors.news.tldr_collector import Collector as TLDRCollector
     from internet_radar.collectors.search.google_trends_collector import Collector as GoogleTrendsCollector
     from internet_radar.collectors.research.arxiv_collector import Collector as ArxivCollector
     from internet_radar.collectors.research.semantic_scholar import Collector as SemanticScholarCollector
@@ -118,6 +124,9 @@ def test_architecture_collector_wrappers_reuse_live_or_safe_fallbacks():
 
     samples = [
         GitHubCollector(use_live_network=False).collect()[0],
+        GitHubTrendingCollector(use_live_network=False).collect()[0],
+        PyPICollector(use_live_network=False).collect()[0],
+        NPMCollector(use_live_network=False).collect()[0],
         CratesCollector(use_live_network=False).collect()[0],
         LibrariesIOCollector(use_live_network=False).collect()[0],
         HNSearchCollector(use_live_network=False).collect()[0],
@@ -126,7 +135,10 @@ def test_architecture_collector_wrappers_reuse_live_or_safe_fallbacks():
         ProductHuntCollector(use_live_network=False).collect()[0],
         RSSCollector(use_live_network=False).collect()[0],
         HashnodeCollector(use_live_network=False).collect()[0],
+        TLDRCollector(use_live_network=False).collect()[0],
         AdzunaCollector(use_live_network=False).collect()[0],
+        YCJobsCollector(use_live_network=False).collect()[0],
+        DevpostCollector(use_live_network=False).collect()[0],
         MLHCollector(use_live_network=False).collect()[0],
         LeetCodeCollector(use_live_network=False).collect()[0],
         ArxivCollector(use_live_network=False).collect()[0],
@@ -145,13 +157,19 @@ def test_architecture_collector_wrappers_reuse_live_or_safe_fallbacks():
         "code",
         "code",
         "code",
+        "code",
+        "code",
+        "code",
         "social",
         "social",
         "social",
+        "news",
         "news",
         "news",
         "news",
         "jobs",
+        "jobs",
+        "hackathons",
         "hackathons",
         "hackathons",
         "research",
@@ -167,15 +185,21 @@ def test_architecture_collector_wrappers_reuse_live_or_safe_fallbacks():
     ]
     assert {sample.source for sample in samples} >= {
         "GitHub Search",
+        "GitHub Trending",
+        "PyPI",
+        "npm Registry",
         "crates.io",
         "Libraries.io",
-        "Hacker News",
+        "HN Algolia",
         "Bluesky",
         "Mastodon",
         "Product Hunt",
         "Tech RSS",
         "Hashnode",
+        "TLDR Newsletter",
         "Adzuna",
+        "YC Jobs",
+        "Devpost",
         "MLH",
         "LeetCode Contests",
         "arXiv",

@@ -611,6 +611,76 @@ def test_source_specific_fallback_preserves_real_collector_identity(monkeypatch)
     assert signal.metadata["fallback"] is True
 
 
+def test_registry_parity_collectors_parse_representative_payloads():
+    from internet_radar.collectors.live import (
+        parse_devpost_hackathons_html,
+        parse_github_trending_html,
+        parse_gitlab_projects,
+        parse_hn_algolia_hits,
+        parse_huggingface_models,
+        parse_mcp_servers_markdown,
+        parse_opencollective_search,
+        parse_stackoverflow_questions,
+        parse_tldr_html,
+        parse_yc_jobs_html,
+    )
+
+    assert parse_github_trending_html('<h2><a href="/openai/codex"> openai / codex </a></h2>')[0].source == "GitHub Trending"
+
+    assert parse_hn_algolia_hits(
+        [{"objectID": "1", "title": "Browser agents on Hacker News", "url": "https://example.com", "points": 42, "num_comments": 9}]
+    )[0].source == "HN Algolia"
+
+    assert parse_tldr_html('<a href="/tech/2026-05-23">Browser agents briefing</a>')[0].source == "TLDR Newsletter"
+
+    assert parse_yc_jobs_html('<a href="/companies/acme/jobs/ai-intern">AI Intern at Acme</a>')[0].source == "YC Jobs"
+
+    assert parse_devpost_hackathons_html('<a href="/hackathons/local-ai">Local AI Hackathon</a>')[0].category == "hackathons"
+
+    assert parse_stackoverflow_questions(
+        {"items": [{"question_id": 1, "title": "How to run local LLM agents?", "score": 5, "answer_count": 2, "tags": ["python", "llm"], "link": "https://stackoverflow.com/q/1"}]}
+    )[0].source == "Stack Overflow"
+
+    assert parse_huggingface_models(
+        [{"modelId": "openai/example-agent", "downloads": 12000, "likes": 300, "tags": ["agents", "text-generation"]}]
+    )[0].source == "Hugging Face Models"
+
+    assert parse_gitlab_projects(
+        [{"id": 1, "path_with_namespace": "group/agent-kit", "web_url": "https://gitlab.com/group/agent-kit", "star_count": 80}]
+    )[0].source == "GitLab Explore"
+
+    assert parse_opencollective_search(
+        {
+            "data": {
+                "search": {
+                    "nodes": [
+                        {
+                            "id": "oc-1",
+                            "slug": "agent-tools",
+                            "name": "Agent Tools",
+                            "type": "COLLECTIVE",
+                            "description": "Open source agent tooling.",
+                            "stats": {"totalAmountReceived": {"value": 25000}},
+                        }
+                    ]
+                }
+            }
+        }
+    )[0].source == "OpenCollective"
+
+    assert parse_mcp_servers_markdown("- [Filesystem](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)")[0].source == "MCP Servers Directory"
+
+
+def test_default_live_collectors_cover_enabled_registry_sources():
+    from internet_radar.collectors.live import default_collectors
+    from internet_radar.sources.registry import enabled_sources
+
+    live_names = {collector.name for collector in default_collectors(use_live_network=True)}
+    enabled_names = {source.name for source in enabled_sources()}
+
+    assert enabled_names <= live_names
+
+
 def test_google_trends_collector_uses_source_specific_fallback(monkeypatch):
     from internet_radar.collectors.live import GoogleTrendsCollector
 

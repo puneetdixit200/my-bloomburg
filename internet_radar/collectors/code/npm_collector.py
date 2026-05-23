@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from internet_radar.collectors.adapters import architecture_collector
-from internet_radar.collectors.live import PackageCollector
+from internet_radar.collectors.live import NPMRegistryCollector
 
-Collector = architecture_collector(name="npm Registry", category="code", live_factory=PackageCollector, topic="npm package velocity", score=64)
+Collector = architecture_collector(
+    name="npm Registry",
+    category="code",
+    live_factory=NPMRegistryCollector,
+    topic="npm package velocity",
+    score=64,
+)

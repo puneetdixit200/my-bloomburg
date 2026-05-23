@@ -442,6 +442,242 @@ def parse_playstore_search_html(text: str) -> list[SignalRecord]:
     return records
 
 
+def parse_github_trending_html(text: str) -> list[SignalRecord]:
+    links = re.findall(r'<h2[^>]*>.*?<a[^>]+href="/([^"/]+/[^"/]+)"[^>]*>(.*?)</a>.*?</h2>', text, flags=re.I | re.S)
+    records: list[SignalRecord] = []
+    for index, (repo_path, label_html) in enumerate(links[:10]):
+        repo = _clean_html(label_html).replace(" ", "")
+        if "/" not in repo:
+            repo = repo_path
+        records.append(
+            SignalRecord(
+                id=f"github-trending:{repo.lower()}",
+                topic=infer_topic(repo),
+                title=f"{repo} is trending on GitHub",
+                source="GitHub Trending",
+                category="code",
+                url=f"https://github.com/{repo_path}",
+                score=max(78 - index, 60),
+                velocity=max(1, 10 - index),
+            )
+        )
+    return records
+
+
+def parse_hn_algolia_hits(items: list[dict[str, Any]]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in items:
+        title = html.unescape(str(item.get("title") or item.get("story_title") or "HN Algolia story"))
+        points = _as_int(item.get("points"))
+        comments = _as_int(item.get("num_comments"))
+        object_id = item.get("objectID") or item.get("story_id") or title
+        records.append(
+            SignalRecord(
+                id=f"hn-algolia:{object_id}",
+                topic=infer_topic(title),
+                title=title,
+                source="HN Algolia",
+                category="social",
+                url=str(item.get("url") or f"https://news.ycombinator.com/item?id={object_id}"),
+                score=min(45 + points // 5 + comments // 3, 100),
+                velocity=points + comments,
+                metadata={"points": points, "comments": comments},
+            )
+        )
+    return records
+
+
+def parse_tldr_html(text: str) -> list[SignalRecord]:
+    candidates = re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', text, flags=re.I | re.S)
+    records: list[SignalRecord] = []
+    seen: set[str] = set()
+    for index, (url, label_html) in enumerate(candidates[:40]):
+        title = _clean_html(label_html)
+        if len(title) < 8 or title.lower() in seen:
+            continue
+        seen.add(title.lower())
+        records.append(
+            SignalRecord(
+                id=f"tldr:{hashlib.sha1(title.encode('utf-8')).hexdigest()[:12]}",
+                topic=infer_topic(title),
+                title=title[:140],
+                source="TLDR Newsletter",
+                category="news",
+                url=url if url.startswith("http") else f"https://tldr.tech{url}",
+                score=max(55, 70 - index),
+                velocity=max(1, 10 - index),
+            )
+        )
+        if len(records) >= 8:
+            break
+    return records
+
+
+def parse_yc_jobs_html(text: str) -> list[SignalRecord]:
+    matches = re.findall(r'href="([^"]*/jobs/[^"]*)"[^>]*>(.*?)</a>', text, flags=re.I | re.S)
+    records: list[SignalRecord] = []
+    seen: set[str] = set()
+    for index, (url, label_html) in enumerate(matches[:12]):
+        title = _clean_html(label_html)
+        if len(title) < 4 or title.lower() in seen:
+            continue
+        seen.add(title.lower())
+        records.append(
+            SignalRecord(
+                id=f"yc-jobs:{hashlib.sha1((url + title).encode('utf-8')).hexdigest()[:12]}",
+                topic=infer_topic(title),
+                title=title[:140],
+                source="YC Jobs",
+                category="jobs",
+                url=url if url.startswith("http") else f"https://www.ycombinator.com{url}",
+                score=max(60, 75 - index),
+                velocity=max(1, 12 - index),
+            )
+        )
+    return records
+
+
+def parse_devpost_hackathons_html(text: str) -> list[SignalRecord]:
+    cards = re.findall(r'<a[^>]+href="([^"]*hackathons/[^"]*)"[^>]*>(.*?)</a>', text, flags=re.I | re.S)
+    records: list[SignalRecord] = []
+    seen: set[str] = set()
+    for index, (url, label_html) in enumerate(cards[:20]):
+        title = _clean_html(label_html)
+        if len(title) < 5 or title.lower() in seen:
+            continue
+        seen.add(title.lower())
+        records.append(
+            SignalRecord(
+                id=f"devpost:{hashlib.sha1((url + title).encode('utf-8')).hexdigest()[:12]}",
+                topic=infer_topic(title),
+                title=title[:140],
+                source="Devpost",
+                category="hackathons",
+                url=url if url.startswith("http") else f"https://devpost.com{url}",
+                score=max(70, 82 - index),
+                velocity=max(1, 20 - index),
+            )
+        )
+        if len(records) >= 10:
+            break
+    return records
+
+
+def parse_stackoverflow_questions(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in _payload_list(payload, "items"):
+        title = html.unescape(str(item.get("title") or "Stack Overflow question"))
+        score = _as_int(item.get("score"))
+        answers = _as_int(item.get("answer_count"))
+        tags = [str(tag) for tag in item.get("tags") or []]
+        records.append(
+            SignalRecord(
+                id=f"stackoverflow:{item.get('question_id', title)}",
+                topic=infer_topic(" ".join(tags) if tags else title),
+                title=title,
+                source="Stack Overflow",
+                category="social",
+                url=str(item.get("link") or ""),
+                score=min(55 + score + answers * 2, 100),
+                velocity=max(score + answers, 1),
+                metadata={"tags": tags, "answers": answers},
+            )
+        )
+    return records
+
+
+def parse_huggingface_models(payload: list[dict[str, Any]] | dict[str, Any]) -> list[SignalRecord]:
+    items = _payload_list(payload, "models") or _payload_list(payload, "items")
+    records: list[SignalRecord] = []
+    for item in items:
+        model_id = str(item.get("modelId") or item.get("id") or "huggingface-model")
+        downloads = _as_int(item.get("downloads"))
+        likes = _as_int(item.get("likes"))
+        tags = [str(tag) for tag in item.get("tags") or []]
+        records.append(
+            SignalRecord(
+                id=f"huggingface-model:{model_id}",
+                topic=infer_topic(" ".join(tags[:3]) if tags else model_id),
+                title=f"{model_id} model velocity",
+                source="Hugging Face Models",
+                category="research",
+                url=f"https://huggingface.co/{model_id}",
+                score=min(58 + downloads // 1000 + likes // 10, 100),
+                velocity=max(downloads, likes, 1),
+                metadata={"downloads": downloads, "likes": likes, "tags": tags[:8]},
+            )
+        )
+    return records
+
+
+def parse_gitlab_projects(payload: list[dict[str, Any]] | dict[str, Any]) -> list[SignalRecord]:
+    items = _payload_list(payload, "projects") or _payload_list(payload, "items")
+    records: list[SignalRecord] = []
+    for item in items:
+        name = str(item.get("path_with_namespace") or item.get("name_with_namespace") or item.get("name") or "GitLab project")
+        stars = _as_int(item.get("star_count"))
+        records.append(
+            SignalRecord(
+                id=f"gitlab:{item.get('id', name)}",
+                topic=infer_topic(name),
+                title=name,
+                source="GitLab Explore",
+                category="code",
+                url=str(item.get("web_url") or ""),
+                score=min(55 + stars // 50, 100),
+                velocity=max(stars, 1),
+                summary=str(item.get("description") or "")[:280],
+                metadata={"stars": stars},
+            )
+        )
+    return records
+
+
+def parse_opencollective_search(payload: dict[str, Any]) -> list[SignalRecord]:
+    nodes = (((payload.get("data") or {}).get("search") or {}).get("nodes") or [])
+    records: list[SignalRecord] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        slug = str(node.get("slug") or node.get("id") or node.get("name") or "collective")
+        stats = node.get("stats") or {}
+        total = _as_float((stats.get("totalAmountReceived") or {}).get("value") if isinstance(stats, dict) else 0)
+        records.append(
+            SignalRecord(
+                id=f"opencollective:{slug}",
+                topic=infer_topic(str(node.get("name") or slug)),
+                title=f"{node.get('name') or slug} funding signal",
+                source="OpenCollective",
+                category="finance",
+                url=f"https://opencollective.com/{slug}",
+                score=min(60 + int(total // 10_000), 100) if total else 60,
+                velocity=total,
+                summary=str(node.get("description") or "")[:280],
+                metadata={"type": node.get("type"), "total_amount_received": total},
+            )
+        )
+    return records
+
+
+def parse_mcp_servers_markdown(text: str) -> list[SignalRecord]:
+    rows = re.findall(r"^\s*[-*]\s+\[([^\]]+)\]\((https?://[^)]+)\)", text, flags=re.M)
+    records: list[SignalRecord] = []
+    for index, (title, url) in enumerate(rows[:12]):
+        records.append(
+            SignalRecord(
+                id=f"mcp-directory:{hashlib.sha1((title + url).encode('utf-8')).hexdigest()[:12]}",
+                topic=infer_topic(title),
+                title=f"{title} MCP server",
+                source="MCP Servers Directory",
+                category="code",
+                url=url,
+                score=max(60, 76 - index),
+                velocity=max(1, 12 - index),
+            )
+        )
+    return records
+
+
 def parse_lobsters_stories(items: list[dict[str, Any]]) -> list[SignalRecord]:
     records: list[SignalRecord] = []
     for item in items:
@@ -1085,6 +1321,46 @@ class GitHubSearchCollector(HTTPCollector):
             return sample_signals("code")
 
 
+class GitHubTrendingCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="GitHub Trending", category="code")
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://github.com/trending")
+            records = parse_github_trending_html(text)
+            return records or source_fallback("GitHub Trending", "code", "github trending", 78)
+        except Exception:
+            return source_fallback("GitHub Trending", "code", "github trending", 78)
+
+
+class GitLabExploreCollector(HTTPCollector):
+    def __init__(self, query: str = "agentic ai") -> None:
+        super().__init__(name="GitLab Explore", category="code")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://gitlab.com/api/v4/projects", search=self.query, order_by="star_count", sort="desc", per_page=10)
+            records = parse_gitlab_projects(data if isinstance(data, (dict, list)) else [])
+            return records or source_fallback("GitLab Explore", "code", "gitlab projects", 58)
+        except Exception:
+            return source_fallback("GitLab Explore", "code", "gitlab projects", 58)
+
+
+class MCPServersDirectoryCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="MCP Servers Directory", category="code")
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://raw.githubusercontent.com/modelcontextprotocol/servers/main/README.md")
+            records = parse_mcp_servers_markdown(text)
+            return records or source_fallback("MCP Servers Directory", "code", "mcp server catalog", 62)
+        except Exception:
+            return source_fallback("MCP Servers Directory", "code", "mcp server catalog", 62)
+
+
 class HackerNewsCollector(HTTPCollector):
     def __init__(self) -> None:
         super().__init__(name="Hacker News", category="social")
@@ -1096,6 +1372,21 @@ class HackerNewsCollector(HTTPCollector):
             return parse_hackernews_items(hits)
         except Exception:
             return sample_signals("social")
+
+
+class HNAlgoliaCollector(HTTPCollector):
+    def __init__(self, query: str = "browser agents") -> None:
+        super().__init__(name="HN Algolia", category="social")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://hn.algolia.com/api/v1/search", query=self.query, tags="story", hitsPerPage=10)
+            hits = list(data.get("hits", [])) if isinstance(data, dict) else []
+            records = parse_hn_algolia_hits(hits)
+            return records or source_fallback("HN Algolia", "social", "hacker news search", 62)
+        except Exception:
+            return source_fallback("HN Algolia", "social", "hacker news search", 62)
 
 
 class RedditJSONCollector(HTTPCollector):
@@ -1179,6 +1470,40 @@ class PackageCollector(HTTPCollector):
         return signals
 
 
+class PyPICollector(HTTPCollector):
+    def __init__(self, packages: list[str] | None = None) -> None:
+        super().__init__(name="PyPI", category="code")
+        self.packages = packages or ["streamlit", "ollama", "playwright"]
+
+    def collect(self) -> list[SignalRecord]:
+        records: list[SignalRecord] = []
+        for package in self.packages:
+            try:
+                data = self.get_json(f"https://pypi.org/pypi/{package}/json")
+                if isinstance(data, dict):
+                    records.extend(parse_pypi_package(package, data))
+            except Exception:
+                continue
+        return records or source_fallback("PyPI", "code", "python package velocity", 64)
+
+
+class NPMRegistryCollector(HTTPCollector):
+    def __init__(self, packages: list[str] | None = None) -> None:
+        super().__init__(name="npm Registry", category="code")
+        self.packages = packages or ["ollama", "playwright", "streamlit"]
+
+    def collect(self) -> list[SignalRecord]:
+        records: list[SignalRecord] = []
+        for package in self.packages:
+            try:
+                data = self.get_json(f"https://registry.npmjs.org/{package}")
+                if isinstance(data, dict):
+                    records.extend(parse_npm_package(package, data))
+            except Exception:
+                continue
+        return records or source_fallback("npm Registry", "code", "npm package velocity", 64)
+
+
 class CratesIOCollector(HTTPCollector):
     def __init__(self, query: str = "llm") -> None:
         super().__init__(name="crates.io", category="code")
@@ -1248,6 +1573,24 @@ class RSSCollector(HTTPCollector):
         ]
 
 
+class ConfiguredRSSCollector(HTTPCollector):
+    def __init__(self, name: str, category: str, topic: str, score: int, config_path: str | Path = "config/rss_feeds.yaml") -> None:
+        super().__init__(name=name, category=category)
+        self.topic = topic
+        self.score = score
+        self.config_path = Path(config_path)
+
+    def collect(self) -> list[SignalRecord]:
+        records: list[SignalRecord] = []
+        for feed in RSSCollector(self.config_path)._feeds()[:5]:
+            try:
+                text = self.get_text(str(feed["url"]))
+                records.extend(parse_rss_entries(text, source_name=self.name))
+            except Exception:
+                continue
+        return records or source_fallback(self.name, self.category, self.topic, self.score)
+
+
 class HashnodeCollector(HTTPCollector):
     query = """
     query {
@@ -1279,6 +1622,37 @@ class HashnodeCollector(HTTPCollector):
             return records or source_fallback("Hashnode", "news", "hashnode developer articles", 55)
         except Exception:
             return source_fallback("Hashnode", "news", "hashnode developer articles", 55)
+
+
+class TLDRNewsletterCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="TLDR Newsletter", category="news")
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://tldr.tech")
+            records = parse_tldr_html(text)
+            return records or source_fallback("TLDR Newsletter", "news", "tech newsletter signals", 55)
+        except Exception:
+            return source_fallback("TLDR Newsletter", "news", "tech newsletter signals", 55)
+
+
+class IndieHackersRSSCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="Indie Hackers", category="news")
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://www.indiehackers.com/feed")
+            records = parse_rss_entries(text, source_name="Indie Hackers")
+            return records or source_fallback("Indie Hackers", "news", "indie hackers discussions", 55)
+        except Exception:
+            return source_fallback("Indie Hackers", "news", "indie hackers discussions", 55)
+
+
+class CompanyEngineeringBlogsCollector(ConfiguredRSSCollector):
+    def __init__(self) -> None:
+        super().__init__(name="Company Engineering Blogs", category="news", topic="engineering blog signals", score=55)
 
 
 class MLHCollector(HTTPCollector):
@@ -1320,6 +1694,19 @@ class LeetCodeContestsCollector(HTTPCollector):
             return source_fallback("LeetCode Contests", "hackathons", "leetcode contests", 60)
 
 
+class DevpostCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="Devpost", category="hackathons")
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://devpost.com/hackathons")
+            records = parse_devpost_hackathons_html(text)
+            return records or source_fallback("Devpost", "hackathons", "devpost hackathons", 70)
+        except Exception:
+            return source_fallback("Devpost", "hackathons", "devpost hackathons", 70)
+
+
 class LobstersCollector(HTTPCollector):
     def __init__(self) -> None:
         super().__init__(name="Lobsters", category="news")
@@ -1342,6 +1729,19 @@ class TheMuseCollector(HTTPCollector):
             return parse_themuse_jobs(data if isinstance(data, dict) else [])
         except Exception:
             return sample_signals("jobs")
+
+
+class YCJobsCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="YC Jobs", category="jobs")
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://www.ycombinator.com/jobs")
+            records = parse_yc_jobs_html(text)
+            return records or source_fallback("YC Jobs", "jobs", "yc startup jobs", 60)
+        except Exception:
+            return source_fallback("YC Jobs", "jobs", "yc startup jobs", 60)
 
 
 class ArbeitnowCollector(HTTPCollector):
@@ -1379,6 +1779,59 @@ class OpenAlexCollector(HTTPCollector):
             return parse_openalex_works(data if isinstance(data, dict) else [])
         except Exception:
             return sample_signals("research")
+
+
+class StackOverflowCollector(HTTPCollector):
+    def __init__(self, tagged: str = "python;ai") -> None:
+        super().__init__(name="Stack Overflow", category="social")
+        self.tagged = tagged
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json(
+                "https://api.stackexchange.com/2.3/questions",
+                order="desc",
+                sort="activity",
+                tagged=self.tagged,
+                site="stackoverflow",
+                pagesize=10,
+            )
+            records = parse_stackoverflow_questions(data if isinstance(data, dict) else {})
+            return records or source_fallback("Stack Overflow", "social", "stackoverflow questions", 58)
+        except Exception:
+            return source_fallback("Stack Overflow", "social", "stackoverflow questions", 58)
+
+
+class HuggingFaceModelsCollector(HTTPCollector):
+    def __init__(self, query: str = "agents") -> None:
+        super().__init__(name="Hugging Face Models", category="research")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://huggingface.co/api/models", search=self.query, sort="downloads", direction=-1, limit=10)
+            records = parse_huggingface_models(data if isinstance(data, (dict, list)) else [])
+            return records or source_fallback("Hugging Face Models", "research", "hugging face models", 62)
+        except Exception:
+            return source_fallback("Hugging Face Models", "research", "hugging face models", 62)
+
+
+class HuggingFacePapersCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="Hugging Face Papers", category="research")
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://huggingface.co/papers/rss")
+            records = parse_rss_entries(text, source_name="Hugging Face Papers")
+            return records or source_fallback("Hugging Face Papers", "research", "hugging face papers", 62)
+        except Exception:
+            return source_fallback("Hugging Face Papers", "research", "hugging face papers", 62)
+
+
+class ConferenceRSSCollector(ConfiguredRSSCollector):
+    def __init__(self) -> None:
+        super().__init__(name="Conference RSS", category="research", topic="conference research signals", score=58)
 
 
 class WikipediaPageviewsCollector(HTTPCollector):
@@ -1422,6 +1875,36 @@ class YahooFinanceCollector(HTTPCollector):
             return records or source_fallback("Yahoo Finance", "finance", "stock trends", 60)
         except Exception:
             return source_fallback("Yahoo Finance", "finance", "stock trends", 60)
+
+
+class OpenCollectiveCollector(HTTPCollector):
+    query = """
+    query {
+      search(term: "AI", limit: 10) {
+        nodes {
+          id
+          slug
+          name
+          type
+          description
+          stats { totalAmountReceived { value } }
+        }
+      }
+    }
+    """
+
+    def __init__(self, http_post: HttpPost = requests.post) -> None:
+        super().__init__(name="OpenCollective", category="finance")
+        self.http_post = http_post
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            response = self.http_post("https://api.opencollective.com/graphql/v2", json={"query": self.query}, timeout=self.timeout)
+            response.raise_for_status()
+            records = parse_opencollective_search(response.json())
+            return records or source_fallback("OpenCollective", "finance", "open source funding", 60)
+        except Exception:
+            return source_fallback("OpenCollective", "finance", "open source funding", 60)
 
 
 class ITunesCollector(HTTPCollector):
@@ -1757,25 +2240,39 @@ def default_collectors(use_live_network: bool = True) -> list[object]:
         return [SampleCollector()]
     return [
         GitHubSearchCollector(),
+        GitHubTrendingCollector(),
+        GitLabExploreCollector(),
+        MCPServersDirectoryCollector(),
         HackerNewsCollector(),
+        HNAlgoliaCollector(),
         RedditJSONCollector(),
         BlueskyCollector(),
         MastodonCollector(),
+        StackOverflowCollector(),
         DevToCollector(),
         RSSCollector(),
         HashnodeCollector(),
+        TLDRNewsletterCollector(),
         LobstersCollector(),
+        IndieHackersRSSCollector(),
+        CompanyEngineeringBlogsCollector(),
         RemoteOKCollector(),
         TheMuseCollector(),
+        YCJobsCollector(),
         ArbeitnowCollector(),
         CodeforcesCollector(),
+        DevpostCollector(),
         MLHCollector(),
         LeetCodeContestsCollector(),
         ArxivCollector(),
         OpenAlexCollector(),
+        HuggingFaceModelsCollector(),
+        HuggingFacePapersCollector(),
+        ConferenceRSSCollector(),
         WikipediaPageviewsCollector(),
         CoinGeckoCollector(),
         YahooFinanceCollector(),
+        OpenCollectiveCollector(),
         ITunesCollector(),
         GooglePlayCollector(),
         SteamCollector(),
@@ -1785,6 +2282,8 @@ def default_collectors(use_live_network: bool = True) -> list[object]:
         YCCompaniesCollector(),
         SECEdgarCollector(),
         PapersWithCodeCollector(),
+        PyPICollector(),
+        NPMRegistryCollector(),
         PackageCollector(),
         CratesIOCollector(),
         *_keyed_collectors_from_env(),
