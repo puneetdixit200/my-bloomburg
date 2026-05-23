@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from internet_radar.scoring.master_scorer import MasterScorer
 from internet_radar.signals.sentiment_pipeline import analyze_sentiment
 from internet_radar.storage.models import SignalRecord
+from internet_radar.utils.text_normalizer import normalize_topic
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,7 @@ def find_startup_gaps(signals: list[SignalRecord], min_complaints: int = 2) -> l
 
 
 def _problem_key(signal: SignalRecord) -> str:
-    return signal.topic.strip().lower()
+    return normalize_topic(signal.topic)
 
 
 def _quote_text(signal: SignalRecord) -> str:

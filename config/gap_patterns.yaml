@@ -1,0 +1,49 @@
+pain_terms:
+  - abandoned
+  - brittle
+  - broken
+  - bug
+  - complaint
+  - confusing
+  - crash
+  - decline
+  - expensive
+  - frustrating
+  - hate
+  - manual
+  - missing
+  - opaque
+  - painful
+  - slow
+  - worse
+phrases:
+  - why doesn't
+  - too expensive
+  - too much manual
+  - hard to debug
+  - no export
+  - doesn't work
+  - keeps breaking
+weights:
+  hate: 5
+  broken: 4
+  brittle: 4
+  "why doesn't": 4
+  expensive: 3
+  manual: 2
+  slow: 2
+categories:
+  billing:
+    - expensive
+    - subscription
+    - invoice
+    - billing
+  developer_experience:
+    - brittle
+    - debug
+    - manual
+    - opaque
+  reliability:
+    - crash
+    - broken
+    - keeps breaking

@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 from internet_radar.storage.models import SignalRecord
+from internet_radar.storage.migrations import applied_versions, apply_migrations
 
 
 class RadarStore:
@@ -20,25 +21,11 @@ class RadarStore:
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS signals (
-                    id TEXT PRIMARY KEY,
-                    topic TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    url TEXT NOT NULL,
-                    score INTEGER NOT NULL,
-                    velocity REAL NOT NULL,
-                    summary TEXT NOT NULL,
-                    observed_at TEXT NOT NULL,
-                    metadata TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_category ON signals(category)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_score ON signals(score DESC)")
+            apply_migrations(conn)
+
+    def schema_versions(self) -> list[str]:
+        with self._connect() as conn:
+            return applied_versions(conn)
 
     def upsert_signals(self, signals: list[SignalRecord]) -> None:
         if not signals:

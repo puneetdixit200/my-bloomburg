@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
+from internet_radar.config.settings import load_gap_patterns
 from internet_radar.storage.models import SignalRecord
+from internet_radar.utils.text_normalizer import normalize_text
 
 
 PAIN_TERMS = {
@@ -25,6 +27,10 @@ PAIN_TERMS = {
     "worse",
 }
 POSITIVE_TERMS = {"love", "useful", "great", "fast", "excellent", "improving", "growth", "popular"}
+CONFIGURED_PATTERNS = load_gap_patterns()
+PAIN_TERMS = PAIN_TERMS | set(CONFIGURED_PATTERNS["pain_terms"]) | set(CONFIGURED_PATTERNS["phrases"])
+PAIN_WEIGHTS = {str(term): int(weight) for term, weight in CONFIGURED_PATTERNS["weights"].items()}
+NORMALIZED_PAIN_TERMS = [(term, normalize_text(term)) for term in sorted(PAIN_TERMS)]
 
 
 @dataclass(frozen=True)
@@ -38,12 +44,13 @@ class SentimentResult:
 
 def analyze_sentiment(signal: SignalRecord) -> SentimentResult:
     text = _signal_text(signal)
-    pain_terms = [term for term in sorted(PAIN_TERMS) if term in text]
+    pain_terms = [term for term, normalized in NORMALIZED_PAIN_TERMS if normalized and normalized in text]
     positive_hits = sum(1 for term in POSITIVE_TERMS if term in text)
     rating = signal.metadata.get("rating")
     rating_penalty = 20 if isinstance(rating, (int, float)) and 0 < rating < 3 else 0
 
-    frustration = min(len(pain_terms) * 18 + rating_penalty + _source_pain_bonus(signal), 100)
+    weighted_pain = sum(PAIN_WEIGHTS.get(term, 1) for term in pain_terms)
+    frustration = min(max(len(pain_terms) * 18, weighted_pain * 12) + rating_penalty + _source_pain_bonus(signal), 100)
     sentiment_score = max(0, min(100, 50 + positive_hits * 15 - frustration // 2))
     if frustration >= 45:
         label = "negative"
@@ -81,7 +88,7 @@ def summarize_sentiment(signals: list[SignalRecord]) -> dict[str, int]:
 
 
 def _signal_text(signal: SignalRecord) -> str:
-    return f"{signal.topic} {signal.title} {signal.summary} {signal.source}".lower()
+    return normalize_text(f"{signal.topic} {signal.title} {signal.summary} {signal.source}")
 
 
 def _source_pain_bonus(signal: SignalRecord) -> int:
