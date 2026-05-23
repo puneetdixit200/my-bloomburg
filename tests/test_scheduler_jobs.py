@@ -63,3 +63,45 @@ def test_smart_triggers_flag_score_multi_source_and_hackathon_crowd_jump():
     assert ("score", "score_gt_90") in reasons
     assert ("c", "topic_hits_3_sources_1h") in reasons
     assert ("hack", "hackathon_crowd_jump") in reasons
+
+
+def test_priority_queue_runs_high_signal_tasks_before_routine_jobs():
+    from internet_radar.scheduler.jobs import ScheduledJob, SmartTrigger
+    from internet_radar.scheduler.priority_queue import build_priority_queue
+
+    queue = build_priority_queue(
+        triggers=[
+            SmartTrigger(signal_id="deep", topic="mcp", reason="topic_hits_3_sources_1h", action="deep_analysis"),
+            SmartTrigger(signal_id="alert", topic="browser agents", reason="score_gt_90", action="immediate_alert"),
+            SmartTrigger(signal_id="crowd", topic="agent hackathon", reason="hackathon_crowd_jump", action="crowd_alert"),
+        ],
+        routine_jobs=[
+            ScheduledJob("reddit_collector", "interval", hours=1),
+            ScheduledJob("daily_briefing_generate", "cron", hour=6),
+        ],
+    )
+
+    ordered = queue.drain()
+
+    assert [task.name for task in ordered] == [
+        "immediate_alert:alert",
+        "deep_analysis:deep",
+        "crowd_alert:crowd",
+        "routine:reddit_collector",
+        "routine:daily_briefing_generate",
+    ]
+    assert [task.priority for task in ordered] == sorted(task.priority for task in ordered)
+
+
+def test_priority_queue_is_stable_for_equal_priority_tasks():
+    from internet_radar.scheduler.jobs import SmartTrigger
+    from internet_radar.scheduler.priority_queue import build_priority_queue
+
+    queue = build_priority_queue(
+        triggers=[
+            SmartTrigger(signal_id="first", topic="mcp", reason="score_gt_90", action="immediate_alert"),
+            SmartTrigger(signal_id="second", topic="agents", reason="score_gt_90", action="immediate_alert"),
+        ]
+    )
+
+    assert [task.name for task in queue.drain()] == ["immediate_alert:first", "immediate_alert:second"]

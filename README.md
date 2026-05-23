@@ -17,6 +17,7 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 - Multi-channel alert dispatch adapters for ntfy, Telegram, Discord, and Mailgun email, with credential-free dry-run coverage in tests.
 - Architecture-style daily briefing and skill learning recommendations derived from job, code, and research momentum.
 - Scheduler job catalog for the architecture cadence map, plus smart triggers for high scores, 3-source topic spikes, and hackathon crowd jumps.
+- Scheduler priority queue so immediate alerts, deep analysis, and crowd warnings run before routine cadence jobs.
 - Special intelligence modules for abandoned-tool opportunities, conference topic radar, salary velocity, and early wave prediction.
 - Ollama integration with installed local models such as `qwen2.5:0.5b`; rule fallback when Ollama is unavailable.
 - Streamlit dashboard with all 13 architecture pages.
