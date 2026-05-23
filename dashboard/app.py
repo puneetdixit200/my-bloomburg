@@ -17,6 +17,7 @@ def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
         [
             {
                 "score": signal.score,
+                "domain_score": signal.metadata.get("research_score", signal.metadata.get("funding_score", "")),
                 "relevance": signal.metadata.get("relevance_score", ""),
                 "topic": signal.topic,
                 "title": signal.title,

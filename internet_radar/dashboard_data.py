@@ -7,6 +7,8 @@ from internet_radar.alerts.alert_manager import build_alerts
 from internet_radar.brain.briefing_writer import write_daily_briefing
 from internet_radar.brain.relevance_scorer import rank_for_profile
 from internet_radar.brain.skill_recommender import recommend_skills
+from internet_radar.scoring.funding_scorer import FundingScorer
+from internet_radar.scoring.research_signal_scorer import ResearchSignalScorer
 from internet_radar.search.radar_search import analyze_query
 from internet_radar.signals.cross_source_multiplier import build_source_agreements
 from internet_radar.signals.gap_finder import find_startup_gaps
@@ -40,6 +42,7 @@ def build_dashboard_payload(
 ) -> dict[str, dict[str, Any]]:
     by_category: dict[str, list[SignalRecord]] = defaultdict(list)
     enrich_signals_with_sentiment(signals)
+    enrich_domain_scores(signals)
     for signal in sorted(signals, key=lambda item: item.score, reverse=True):
         by_category[signal.category].append(signal)
 
@@ -91,3 +94,20 @@ def build_dashboard_payload(
             "query_analysis": query_analysis,
         }
     return payload
+
+
+def enrich_domain_scores(signals: list[SignalRecord]) -> None:
+    research_scorer = ResearchSignalScorer()
+    funding_scorer = FundingScorer()
+    for signal in signals:
+        if signal.category == "research":
+            result = research_scorer.score({"topic": signal.topic, **signal.metadata})
+            signal.metadata["research_score"] = result.score
+            signal.metadata["research_components"] = result.components
+            signal.metadata["recommended_skill"] = result.recommended_skill
+            signal.metadata["industry_lag_months"] = result.industry_lag_months
+        elif signal.category == "finance":
+            result = funding_scorer.score({"sector": signal.topic, **signal.metadata})
+            signal.metadata["funding_score"] = result.score
+            signal.metadata["funding_components"] = result.components
+            signal.metadata["market_validation"] = result.market_validation

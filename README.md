@@ -11,6 +11,7 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 - SQLite persistence in `data/radar.sqlite`.
 - Cross-source validation, deduplication, scoring, and local-first LLM routing.
 - Cross-source agreement matrix with architecture multipliers for weak, strong, and act-now signals.
+- Dedicated research and funding scorers for academic momentum and market-validation signals.
 - Space-conscious local embeddings, vector search, and semantic clusters for related signals without requiring a heavy vector database.
 - Deterministic sentiment/frustration scoring and startup gap clustering for pain-heavy social and app-store signals.
 - Profile-aware relevance scoring from `config/interests.yaml`, including skills, interests, goals, blocked topics, alert threshold, and suggested Radar Search queries.
