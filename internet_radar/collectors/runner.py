@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 from internet_radar.storage.models import SignalRecord
@@ -14,6 +15,7 @@ class CollectorResult:
     category: str
     signals: list[SignalRecord]
     status: str
+    duration_seconds: float = 0.0
 
 
 def collect_from_sources(collectors: Sequence[object], max_workers: int | None = None) -> list[CollectorResult]:
@@ -35,12 +37,25 @@ def collect_from_sources(collectors: Sequence[object], max_workers: int | None =
 def _collect_one(collector: object) -> CollectorResult:
     name = str(getattr(collector, "name", collector.__class__.__name__))
     category = str(getattr(collector, "category", "unknown"))
+    started = perf_counter()
     try:
         raw_signals = getattr(collector, "collect")()
         signals = _coerce_signals(raw_signals)
-        return CollectorResult(name=name, category=category, signals=signals, status=f"ok ({len(signals)})")
+        return CollectorResult(
+            name=name,
+            category=category,
+            signals=signals,
+            status=f"ok ({len(signals)})",
+            duration_seconds=round(perf_counter() - started, 3),
+        )
     except Exception as exc:
-        return CollectorResult(name=name, category=category, signals=[], status=f"error: {exc}")
+        return CollectorResult(
+            name=name,
+            category=category,
+            signals=[],
+            status=f"error: {exc}",
+            duration_seconds=round(perf_counter() - started, 3),
+        )
 
 
 def _coerce_signals(raw_signals: Any) -> list[SignalRecord]:

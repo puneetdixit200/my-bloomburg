@@ -193,6 +193,10 @@ def test_pipeline_runs_with_fake_collectors_and_persists(tmp_path):
     assert result.active_sources == 1
     assert result.signals_24h == 1
     assert result.top_signals[0].topic == "browser agents"
+    assert result.collection_mode == "sample"
+    assert result.collection_duration_seconds >= 0
+    assert result.source_counts["Fake Collector"] == 1
+    assert "Fake Collector" in result.source_durations_seconds
     assert RadarStore(db_path).list_signals()[0].source == "Fake Collector"
 
 
@@ -817,3 +821,42 @@ def test_keyed_collectors_are_added_to_live_defaults_when_credentials_exist(monk
         "Brave Search",
         "Tavily",
     } <= names
+
+
+def test_free_only_mode_skips_paid_keyed_collectors(monkeypatch):
+    from internet_radar.collectors.live import default_collectors
+
+    monkeypatch.setenv("INTERNET_RADAR_FREE_ONLY", "1")
+    monkeypatch.setenv("CRUNCHBASE_API_KEY", "key")
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "key")
+    monkeypatch.setenv("TAVILY_API_KEY", "key")
+
+    names = {collector.name for collector in default_collectors(use_live_network=True)}
+
+    assert "Crunchbase" not in names
+    assert "Brave Search" not in names
+    assert "Tavily" in names
+
+
+def test_briefing_payload_cache_round_trips(tmp_path):
+    from internet_radar.storage.models import BriefingPayload, SignalRecord
+    from internet_radar.storage.payload_cache import load_briefing_payload, payload_cache_age_seconds, save_briefing_payload
+
+    payload = BriefingPayload(
+        active_sources=1,
+        signals_24h=1,
+        top_signals=[SignalRecord(id="cache:1", topic="mcp", title="MCP repo", source="GitHub", category="code")],
+        source_health={"GitHub": "ok (1)"},
+        source_counts={"GitHub": 1},
+        source_durations_seconds={"GitHub": 0.1},
+        collection_mode="live",
+    )
+    path = tmp_path / "payload.json"
+
+    save_briefing_payload(payload, path)
+    restored = load_briefing_payload(path)
+
+    assert restored is not None
+    assert restored.loaded_from_cache is True
+    assert restored.top_signals[0].title == "MCP repo"
+    assert payload_cache_age_seconds(path) is not None

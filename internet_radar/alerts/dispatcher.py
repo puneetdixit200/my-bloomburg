@@ -89,14 +89,15 @@ def _send_email(alert: AlertMessage, config: dict[str, str], http_post: HttpPost
 
 
 def _config(overrides: dict[str, str]) -> dict[str, str]:
+    free_only = os.getenv("INTERNET_RADAR_FREE_ONLY", "0") == "1"
     env = {
         "ntfy_topic": os.getenv("INTERNET_RADAR_NTFY_TOPIC", ""),
         "ntfy_server": os.getenv("INTERNET_RADAR_NTFY_SERVER", "https://ntfy.sh"),
         "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
         "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
         "discord_webhook_url": os.getenv("DISCORD_WEBHOOK_URL", ""),
-        "mailgun_domain": os.getenv("MAILGUN_DOMAIN", ""),
-        "mailgun_api_key": os.getenv("MAILGUN_API_KEY", ""),
+        "mailgun_domain": "" if free_only else os.getenv("MAILGUN_DOMAIN", ""),
+        "mailgun_api_key": "" if free_only else os.getenv("MAILGUN_API_KEY", ""),
         "email_to": os.getenv("INTERNET_RADAR_EMAIL_TO", ""),
         "email_from": os.getenv("INTERNET_RADAR_EMAIL_FROM", ""),
     }

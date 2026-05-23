@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from time import perf_counter
 
 from internet_radar.brain.llm_router import LLMRouter
 from internet_radar.collectors.live import default_collectors
@@ -16,12 +17,15 @@ def run_radar_once(
     db_path: str | Path | None = None,
     use_live_network: bool | None = None,
 ) -> BriefingPayload:
+    started = perf_counter()
     if use_live_network is None:
         use_live_network = os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1"
 
     selected_collectors = collectors or default_collectors(use_live_network=use_live_network)
     collector_results = collect_from_sources(selected_collectors)
     source_health = {result.name: result.status for result in collector_results}
+    source_counts = {result.name: len(result.signals) for result in collector_results}
+    source_durations = {result.name: result.duration_seconds for result in collector_results}
     signals = [signal for result in collector_results for signal in result.signals]
 
     deduped = deduplicate_signals(signals)
@@ -36,5 +40,9 @@ def run_radar_once(
         signals_24h=len(top_signals),
         top_signals=top_signals,
         source_health=source_health,
+        source_counts=source_counts,
+        source_durations_seconds=source_durations,
         llm_status=f"{llm_choice.provider}:{llm_choice.model}",
+        collection_duration_seconds=round(perf_counter() - started, 3),
+        collection_mode="live" if use_live_network else "sample",
     )

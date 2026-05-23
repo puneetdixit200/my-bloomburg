@@ -6,5 +6,6 @@ __pycache__/
 .env
 data/*.sqlite
 data/*.db
+data/*.json
 data/chroma/
 .DS_Store

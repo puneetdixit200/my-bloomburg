@@ -39,6 +39,7 @@ def test_dashboard_payload_groups_signals_by_page():
     assert payload["github_radar"]["signals"][0].source == "GitHub"
     assert payload["internship_radar"]["signals"][0].category == "jobs"
     assert payload["research_radar"]["signals"][0].category == "research"
+    assert "collection" in payload["briefing"]
 
 
 def test_sample_payload_has_hackathon_radar_signal(tmp_path):
@@ -69,8 +70,10 @@ def test_dashboard_signal_filters_are_shared_across_pages():
     ]
 
     filtered = _apply_filters(signals, {"categories": ["code"], "min_score": 80, "query": "repo", "source": "GitHub Search"})
+    group_filtered = _apply_filters(signals, {"source_groups": ["jobs"]})
 
     assert [signal.id for signal in filtered] == ["code"]
+    assert [signal.id for signal in group_filtered] == ["job"]
 
 
 def test_dashboard_extracts_project_signals_for_github_radar():
@@ -124,3 +127,26 @@ def test_dashboard_signal_preview_frame_is_static_and_limited():
     assert len(frame) == 5
     assert list(empty.columns) == ["score", "title", "source", "category", "url"]
     assert empty.empty
+
+
+def test_dashboard_report_and_source_health_frames():
+    from dashboard.app import _build_markdown_report, _source_health_frame
+    from internet_radar.dashboard_data import build_dashboard_payload
+    from internet_radar.storage.models import SignalRecord
+
+    payload = build_dashboard_payload(
+        [SignalRecord(id="gh", topic="mcp", title="MCP repo spike", source="GitHub Search", category="code", score=91)],
+        active_sources=1,
+        source_health={"GitHub Search": "ok (1)"},
+        source_counts={"GitHub Search": 1},
+        source_durations_seconds={"GitHub Search": 0.2},
+        collection_mode="live",
+    )
+
+    report = _build_markdown_report(payload)
+    health = _source_health_frame(payload["briefing"])
+
+    assert "Internet Radar Daily Report" in report
+    assert "MCP repo spike" in report
+    assert health.iloc[0]["source"] == "GitHub Search"
+    assert health.iloc[0]["signals"] == 1

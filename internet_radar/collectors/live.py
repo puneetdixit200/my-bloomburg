@@ -2367,6 +2367,7 @@ def keyed_source_fallback(name: str, category: str, topic: str, score: int) -> l
 
 def _keyed_collectors_from_env() -> list[object]:
     collectors: list[object] = []
+    free_only = os.getenv("INTERNET_RADAR_FREE_ONLY", "0") == "1"
     if os.getenv("LIBRARIES_IO_API_KEY"):
         collectors.append(LibrariesIOCollector())
     if os.getenv("PRODUCTHUNT_TOKEN"):
@@ -2377,9 +2378,9 @@ def _keyed_collectors_from_env() -> list[object]:
         collectors.append(HackerEarthCollector())
     if os.getenv("SEMANTIC_SCHOLAR_API_KEY"):
         collectors.append(SemanticScholarCollector())
-    if os.getenv("CRUNCHBASE_API_KEY"):
+    if os.getenv("CRUNCHBASE_API_KEY") and not free_only:
         collectors.append(CrunchbaseCollector())
-    if os.getenv("BRAVE_SEARCH_API_KEY"):
+    if os.getenv("BRAVE_SEARCH_API_KEY") and not free_only:
         collectors.append(BraveSearchCollector())
     if os.getenv("TAVILY_API_KEY"):
         collectors.append(TavilyCollector())

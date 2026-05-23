@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+from datetime import UTC, datetime
 import os
+from threading import Thread
 from typing import Any
 
 import pandas as pd
@@ -11,7 +13,12 @@ from internet_radar.config.settings import load_user_profile
 from internet_radar.dashboard_data import PAGE_DEFINITIONS, build_dashboard_payload
 from internet_radar.pipeline import run_radar_once
 from internet_radar.sources.registry import SOURCE_REGISTRY, enabled_sources
-from internet_radar.storage.models import SignalRecord
+from internet_radar.storage.models import BriefingPayload, SignalRecord
+from internet_radar.storage.payload_cache import load_briefing_payload, payload_cache_age_seconds, save_briefing_payload
+
+
+CATEGORIES = ["code", "social", "news", "jobs", "hackathons", "research", "finance", "search", "app_stores"]
+_BACKGROUND_REFRESH_RUNNING = False
 
 
 def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
@@ -30,6 +37,43 @@ def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
             for signal in signals
         ]
     )
+
+
+def _source_health_frame(page_payload: dict[str, object], category: str | None = None) -> pd.DataFrame:
+    health = dict(page_payload.get("source_health", {}))
+    counts = dict(page_payload.get("source_counts", {}))
+    durations = dict(page_payload.get("source_durations_seconds", {}))
+    rows = []
+    for source, status in sorted(health.items()):
+        source_category = _source_category(source)
+        if category and category != "all" and source_category != category:
+            continue
+        rows.append(
+            {
+                "source": source,
+                "category": source_category or "",
+                "status": status,
+                "signals": int(counts.get(source, 0) or 0),
+                "seconds": float(durations.get(source, 0.0) or 0.0),
+                "mode": _status_mode(str(status)),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _source_category(source_name: str) -> str | None:
+    for source in SOURCE_REGISTRY:
+        if source.name == source_name:
+            return str(source.category)
+    return None
+
+
+def _status_mode(status: str) -> str:
+    if status.startswith("ok"):
+        return "live/fallback"
+    if status.startswith("error"):
+        return "error"
+    return "unknown"
 
 
 def _signal_preview_frame(signals: list[SignalRecord], limit: int = 10) -> pd.DataFrame:
@@ -65,6 +109,14 @@ def _projects_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
 def _project_name(signal: SignalRecord) -> str:
     title = signal.title.removesuffix(" is trending on GitHub")
     return title if "/" in title else signal.topic or title
+
+
+def _project_action(signal: SignalRecord) -> str:
+    if signal.score >= 90:
+        return "Watch now, inspect the README, and clone if it overlaps your interests."
+    if signal.score >= 75:
+        return "Track this project and compare it with adjacent tools."
+    return "Keep as background context unless it appears in more sources."
 
 
 def _is_project_url(url: str) -> bool:
@@ -168,6 +220,87 @@ def _objects_to_frame(items: list[object]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _build_markdown_report(payload: dict[str, dict[str, object]]) -> str:
+    top = payload["briefing"]
+    collection = dict(top.get("collection", {}))
+    lines = [
+        "# Internet Radar Daily Report",
+        "",
+        f"- Generated: {collection.get('generated_at') or 'unknown'}",
+        f"- Mode: {collection.get('mode', 'unknown')}",
+        f"- Active sources: {top.get('active_sources', 0)}",
+        f"- Signals: {top.get('signals_24h', 0)}",
+        f"- LLM route: {top.get('llm_status', 'unknown')}",
+        "",
+    ]
+    sections = [
+        ("Top Signals", payload["briefing"].get("signals", [])[:10]),
+        ("Projects", _project_signals(list(payload["github_radar"].get("signals", [])))[:10]),
+        ("Startup Gaps", payload["startup_gaps"].get("signals", [])[:10]),
+        ("Skills", payload["skill_radar"].get("signals", [])[:10]),
+        ("Research", payload["research_radar"].get("signals", [])[:10]),
+    ]
+    for title, signals in sections:
+        lines.extend([f"## {title}", ""])
+        if not signals:
+            lines.append("- No signals in this section.")
+        for signal in signals:
+            lines.append(f"- [{signal.score}] {signal.title} ({signal.source}) {signal.url}".rstrip())
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _render_project_details(projects: list[SignalRecord]) -> None:
+    if not projects:
+        return
+    labels = [_project_name(signal) for signal in projects]
+    selected = st.selectbox("Inspect project", labels, key="inspect-project")
+    signal = projects[labels.index(selected)]
+    with st.expander("Project detail", expanded=True):
+        cols = st.columns(4)
+        cols[0].metric("Score", signal.score)
+        cols[1].metric("Stars", signal.metadata.get("stars", ""))
+        cols[2].metric("Language", signal.metadata.get("language", "") or "unknown")
+        cols[3].metric("Source", signal.source)
+        st.write(signal.summary or signal.title)
+        st.write(f"Suggested action: {_project_action(signal)}")
+        if signal.url:
+            st.markdown(f"[Open project]({signal.url})")
+
+
+def _render_startup_idea_cards(page_payload: dict[str, object]) -> None:
+    analyses = list(page_payload.get("gap_analyses", []))
+    gaps = list(page_payload.get("gap_clusters", []))
+    if not analyses and not gaps:
+        return
+    st.subheader("Startup Idea Cards")
+    for index, analysis in enumerate(analyses[:5], start=1):
+        ideas = list(getattr(analysis, "startup_ideas", []))
+        patterns = list(getattr(analysis, "patterns", []))
+        idea = ideas[0] if ideas else None
+        pattern = patterns[0] if patterns else None
+        title = getattr(idea, "idea", None) or getattr(analysis, "topic", f"Idea {index}")
+        with st.expander(f"{index}. {title}", expanded=index == 1):
+            if pattern:
+                st.write(f"Problem: {getattr(pattern, 'problem', '')}")
+                st.write(f"Evidence: {getattr(pattern, 'representative_quote', '')}")
+                cols = st.columns(3)
+                cols[0].metric("Complaints", getattr(pattern, "complaints", 0))
+                cols[1].metric("Pain", getattr(pattern, "pain_level", 0))
+                cols[2].metric("Score", getattr(idea, "score", 0) if idea else 0)
+            if idea:
+                st.write(f"Who pays / market: {getattr(idea, 'market_size', '')}")
+                st.write(f"Competition: {getattr(idea, 'competition_level', '')}")
+                st.write(f"MVP difficulty: {getattr(idea, 'technical_difficulty', '')}")
+            st.write(f"Next step: {getattr(analysis, 'recommended_action', '')}")
+    if not analyses:
+        for index, gap in enumerate(gaps[:5], start=1):
+            with st.expander(f"{index}. {getattr(gap, 'startup_idea', 'Startup idea')}", expanded=index == 1):
+                st.write(f"Problem: {getattr(gap, 'problem', '')}")
+                st.write(f"Evidence: {getattr(gap, 'best_quote', '')}")
+                st.write(f"Sources: {', '.join(getattr(gap, 'sources', []))}")
+
+
 def _category_distribution_frame(signals: list[SignalRecord]) -> pd.DataFrame:
     if not signals:
         return pd.DataFrame()
@@ -185,12 +318,15 @@ def _source_distribution_frame(signals: list[SignalRecord]) -> pd.DataFrame:
 def _apply_filters(signals: list[SignalRecord], filters: dict[str, Any] | None = None) -> list[SignalRecord]:
     filters = filters or {}
     categories = set(filters.get("categories") or [])
+    source_groups = set(filters.get("source_groups") or CATEGORIES)
     source = str(filters.get("source") or "")
     query = str(filters.get("query") or "").strip().lower()
     min_score = int(filters.get("min_score", 0))
     filtered: list[SignalRecord] = []
     for signal in signals:
         haystack = f"{signal.topic} {signal.title} {signal.summary} {signal.source} {signal.category}".lower()
+        if source_groups and signal.category not in source_groups:
+            continue
         if categories and signal.category not in categories:
             continue
         if source and signal.source != source:
@@ -203,7 +339,12 @@ def _apply_filters(signals: list[SignalRecord], filters: dict[str, Any] | None =
     return filtered
 
 
-def _render_signal_explorer(signals: list[SignalRecord], filters: dict[str, Any] | None = None, key_prefix: str = "signals") -> None:
+def _render_signal_explorer(
+    signals: list[SignalRecord],
+    filters: dict[str, Any] | None = None,
+    key_prefix: str = "signals",
+    page_payload: dict[str, object] | None = None,
+) -> None:
     filtered = _apply_filters(signals, filters)
     cols = st.columns(4)
     cols[0].metric("Signals in view", len(filtered))
@@ -212,7 +353,12 @@ def _render_signal_explorer(signals: list[SignalRecord], filters: dict[str, Any]
     cols[3].metric("Topics", len({signal.topic for signal in filtered}))
 
     if not filtered:
-        st.info("No signals for this view yet. Run a live collection or adjust source settings.")
+        st.info("No signals match this view. Clear filters, enable the related source group, or refresh live data.")
+        if page_payload:
+            st.caption("Sources checked for this view")
+            health_frame = _source_health_frame(page_payload)
+            if not health_frame.empty:
+                st.table(health_frame.head(12))
         return
 
     st.subheader("Visible Data")
@@ -256,7 +402,7 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
         personalized = list(page_payload.get("personalized_signals", []))
         if personalized:
             st.subheader("Personalized Feed")
-            _render_signal_explorer(personalized, filters, key_prefix="profile-personalized")
+            _render_signal_explorer(personalized, filters, key_prefix="profile-personalized", page_payload=page_payload)
         return
 
     if page_key == "radar_search":
@@ -288,6 +434,7 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
             project_frame = _projects_to_frame(projects)
             st.table(project_frame.head(12))
             st.dataframe(project_frame, width="stretch", hide_index=True)
+            _render_project_details(projects)
         else:
             st.info("No project repository signals match the current filters. Clear the sidebar filters or enable live collection.")
 
@@ -330,6 +477,8 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
             st.dataframe(_objects_to_frame(funding_signals), width="stretch", hide_index=True)
 
     if page_key in {"startup_gaps", "app_store_pain"}:
+        if page_key == "startup_gaps":
+            _render_startup_idea_cards(page_payload)
         analyses = list(page_payload.get("gap_analyses", []))
         if page_key == "startup_gaps" and analyses:
             st.subheader("Gap Analysis")
@@ -354,11 +503,12 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
             st.subheader("Sentiment Summary")
             st.dataframe(_sentiment_to_frame(summary), width="stretch", hide_index=True)
 
-    _render_signal_explorer(signals, filters, key_prefix=page_key)
+    _render_signal_explorer(signals, filters, key_prefix=page_key, page_payload=page_payload)
 
 
 def render_dashboard(payload: dict[str, dict[str, object]], filters: dict[str, Any] | None = None) -> None:
     top = payload["briefing"]
+    collection = dict(top.get("collection", {}))
     cols = st.columns(4)
     cols[0].metric("Active sources", int(top["active_sources"]))
     cols[1].metric("Signals", int(top["signals_24h"]))
@@ -366,12 +516,43 @@ def render_dashboard(payload: dict[str, dict[str, object]], filters: dict[str, A
     cols[3].metric("Enabled by default", len(enabled_sources()))
 
     st.write(f"LLM route: `{top['llm_status']}`")
+    freshness_cols = st.columns(4)
+    freshness_cols[0].metric("Mode", str(collection.get("mode", "unknown")))
+    freshness_cols[1].metric("Payload", "cache" if collection.get("loaded_from_cache") else "fresh")
+    freshness_cols[2].metric("Collection seconds", f"{float(collection.get('duration_seconds') or 0):.1f}")
+    freshness_cols[3].metric("Generated", _format_generated_at(collection.get("generated_at")))
+    st.download_button(
+        "Download Daily Report",
+        _build_markdown_report(payload).encode("utf-8"),
+        file_name="internet-radar-daily-report.md",
+        mime="text/markdown",
+        key="download-daily-report",
+    )
     st.subheader("Top Signals Preview")
     st.table(_signal_preview_frame(list(top.get("signals", []))))
+    health_frame = _source_health_frame(top)
+    if not health_frame.empty:
+        with st.expander("Source Health", expanded=True):
+            st.dataframe(health_frame, width="stretch", hide_index=True)
     tabs = st.tabs([page.title for page in PAGE_DEFINITIONS])
     for tab, page in zip(tabs, PAGE_DEFINITIONS, strict=True):
         with tab:
             render_page(page.key, payload[page.key], filters=filters)
+
+
+def _format_generated_at(value: object) -> str:
+    if not value:
+        return "unknown"
+    if isinstance(value, datetime):
+        current = value
+    else:
+        try:
+            current = datetime.fromisoformat(str(value))
+        except ValueError:
+            return str(value)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return current.astimezone().strftime("%H:%M:%S")
 
 
 def render_page_entry(page_key: str) -> None:
@@ -383,15 +564,62 @@ def render_page_entry(page_key: str) -> None:
 
 
 @st.cache_data(ttl=300, show_spinner="Collecting live signals...")
-def load_payload(use_live_network: bool = False) -> dict[str, dict[str, object]]:
+def load_payload(use_live_network: bool = False, refresh_token: int = 0) -> dict[str, dict[str, object]]:
+    if use_live_network and refresh_token == 0:
+        cached = load_briefing_payload()
+        if cached is not None:
+            return _payload_from_briefing(cached)
+
+    briefing = _collect_and_cache(use_live_network)
+    return _payload_from_briefing(briefing)
+
+
+def _collect_and_cache(use_live_network: bool) -> BriefingPayload:
     briefing = run_radar_once(use_live_network=use_live_network)
+    if use_live_network:
+        save_briefing_payload(briefing)
+    return briefing
+
+
+def _payload_from_briefing(briefing: BriefingPayload) -> dict[str, dict[str, object]]:
     profile = load_user_profile()
     return build_dashboard_payload(
         briefing.top_signals,
         active_sources=briefing.active_sources,
         llm_status=briefing.llm_status,
         profile=profile,
+        generated_at=briefing.generated_at,
+        collection_duration_seconds=briefing.collection_duration_seconds,
+        collection_mode=briefing.collection_mode,
+        loaded_from_cache=briefing.loaded_from_cache,
+        source_health=briefing.source_health,
+        source_counts=briefing.source_counts,
+        source_durations_seconds=briefing.source_durations_seconds,
     )
+
+
+def _maybe_start_background_refresh(use_live_network: bool) -> None:
+    global _BACKGROUND_REFRESH_RUNNING
+    if not use_live_network:
+        return
+    interval = int(os.getenv("INTERNET_RADAR_BACKGROUND_REFRESH_SECONDS", "3600"))
+    if interval <= 0:
+        return
+    age = payload_cache_age_seconds()
+    if age is not None and age < interval:
+        return
+    if _BACKGROUND_REFRESH_RUNNING:
+        return
+    _BACKGROUND_REFRESH_RUNNING = True
+
+    def refresh() -> None:
+        global _BACKGROUND_REFRESH_RUNNING
+        try:
+            _collect_and_cache(use_live_network=True)
+        finally:
+            _BACKGROUND_REFRESH_RUNNING = False
+
+    Thread(target=refresh, name="internet-radar-refresh", daemon=True).start()
 
 
 def main() -> None:
@@ -403,13 +631,18 @@ def main() -> None:
         st.header("Collection")
         default_live = os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1"
         use_live = st.toggle("Use live network collectors", value=default_live)
+        free_only = os.getenv("INTERNET_RADAR_FREE_ONLY", "0") == "1"
+        st.caption(f"Mode: {'free-only' if free_only else 'all configured'}")
         st.caption("Off uses deterministic sample signals. On calls no-key public APIs and falls back on errors.")
         if st.button("Refresh data"):
+            st.session_state["refresh_token"] = int(st.session_state.get("refresh_token", 0)) + 1
             load_payload.clear()
+        st.header("Source Groups")
+        source_groups = st.multiselect("Visible groups", CATEGORIES, default=CATEGORIES)
         st.header("Filters")
         categories = st.multiselect(
             "Categories",
-            ["code", "social", "news", "jobs", "hackathons", "research", "finance", "search", "app_stores"],
+            CATEGORIES,
             default=[],
         )
         min_score = st.slider("Minimum score", min_value=0, max_value=100, value=0, step=5)
@@ -417,8 +650,19 @@ def main() -> None:
         source_options = sorted({source.name for source in SOURCE_REGISTRY})
         source = st.selectbox("Source", [""] + source_options, index=0)
 
-    payload = load_payload(use_live_network=use_live)
-    render_dashboard(payload, filters={"categories": categories, "min_score": min_score, "query": query, "source": source})
+    refresh_token = int(st.session_state.get("refresh_token", 0))
+    payload = load_payload(use_live_network=use_live, refresh_token=refresh_token)
+    _maybe_start_background_refresh(use_live)
+    render_dashboard(
+        payload,
+        filters={
+            "categories": categories,
+            "source_groups": source_groups,
+            "min_score": min_score,
+            "query": query,
+            "source": source,
+        },
+    )
 
 
 if __name__ == "__main__":

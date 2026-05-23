@@ -26,6 +26,7 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 - Special intelligence modules for abandoned-tool opportunities, conference topic radar, salary velocity, and early wave prediction.
 - Ollama integration with installed local models such as `qwen2.5:0.5b`; rule fallback when Ollama is unavailable.
 - Streamlit dashboard with all 13 architecture pages, interactive filters, charts, CSV export, and signal drilldowns.
+- Dashboard reliability layer with source health, visible data previews, latest-payload cache, manual refresh, free-only mode, and Markdown daily report export.
 - Pytest coverage for pipeline, storage, scoring, collectors, LLM routing, dashboard smoke paths, and Streamlit rendering.
 
 ## Setup
@@ -41,6 +42,7 @@ The app defaults to sample data to keep it reliable and fast. To call public no-
 
 ```bash
 export INTERNET_RADAR_USE_LIVE=1
+export INTERNET_RADAR_FREE_ONLY=1
 ```
 
 `config/rss_feeds.yaml` ships with 20+ feeds. Keep adding feeds there; the RSS collectors read the file directly.
@@ -52,6 +54,8 @@ SQLite is the default storage backend:
 ```bash
 export INTERNET_RADAR_STORAGE_BACKEND=sqlite
 export INTERNET_RADAR_DB=data/radar.sqlite
+export INTERNET_RADAR_PAYLOAD_CACHE=data/latest_payload.json
+export INTERNET_RADAR_BACKGROUND_REFRESH_SECONDS=3600
 ```
 
 Supabase is ready through REST keys:

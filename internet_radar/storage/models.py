@@ -80,7 +80,12 @@ class BriefingPayload(BaseModel):
     signals_24h: int
     top_signals: list[SignalRecord]
     source_health: dict[str, str] = Field(default_factory=dict)
+    source_counts: dict[str, int] = Field(default_factory=dict)
+    source_durations_seconds: dict[str, float] = Field(default_factory=dict)
     llm_status: str = "deterministic fallback"
+    collection_duration_seconds: float = 0.0
+    collection_mode: Literal["live", "sample"] = "sample"
+    loaded_from_cache: bool = False
 
 
 class PageDefinition(BaseModel):

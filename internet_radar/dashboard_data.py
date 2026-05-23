@@ -53,6 +53,13 @@ def build_dashboard_payload(
     active_sources: int = 0,
     llm_status: str = "unknown",
     profile: UserProfile | None = None,
+    generated_at: object | None = None,
+    collection_duration_seconds: float = 0.0,
+    collection_mode: str = "sample",
+    loaded_from_cache: bool = False,
+    source_health: dict[str, str] | None = None,
+    source_counts: dict[str, int] | None = None,
+    source_durations_seconds: dict[str, float] | None = None,
 ) -> dict[str, dict[str, Any]]:
     by_category: dict[str, list[SignalRecord]] = defaultdict(list)
     profile = profile or UserProfile()
@@ -93,6 +100,12 @@ def build_dashboard_payload(
     )
     daily_briefing = write_daily_briefing(all_signals, active_sources=active_sources, llm_status=llm_status)
     skill_recommendations = recommend_skills(all_signals, profile=profile)
+    collection = {
+        "generated_at": generated_at,
+        "duration_seconds": collection_duration_seconds,
+        "mode": collection_mode,
+        "loaded_from_cache": loaded_from_cache,
+    }
     payload: dict[str, dict[str, Any]] = {}
     for page in PAGE_DEFINITIONS:
         if page.category == "all":
@@ -113,6 +126,10 @@ def build_dashboard_payload(
             "active_sources": active_sources,
             "signals_24h": len(all_signals),
             "llm_status": llm_status,
+            "collection": collection,
+            "source_health": source_health or {},
+            "source_counts": source_counts or {},
+            "source_durations_seconds": source_durations_seconds or {},
             "personalized_signals": personalized_signals,
             "alerts": alerts,
             "daily_briefing": daily_briefing,
