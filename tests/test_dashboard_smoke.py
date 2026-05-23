@@ -71,3 +71,38 @@ def test_dashboard_signal_filters_are_shared_across_pages():
     filtered = _apply_filters(signals, {"categories": ["code"], "min_score": 80, "query": "repo", "source": "GitHub Search"})
 
     assert [signal.id for signal in filtered] == ["code"]
+
+
+def test_dashboard_extracts_project_signals_for_github_radar():
+    from dashboard.app import _project_signals, _projects_to_frame
+    from internet_radar.storage.models import SignalRecord
+
+    signals = [
+        SignalRecord(
+            id="repo",
+            topic="agent repo",
+            title="example/agent",
+            source="GitHub Search",
+            category="code",
+            url="https://github.com/example/agent",
+            score=91,
+            metadata={"stars": 123, "language": "Python"},
+        ),
+        SignalRecord(
+            id="search",
+            topic="agent search",
+            title="Agent search",
+            source="GitHub Search",
+            category="code",
+            url="https://github.com/search?q=agents",
+            score=88,
+        ),
+        SignalRecord(id="pkg", topic="agent package", title="agent package", source="PyPI", category="code", score=80),
+    ]
+
+    projects = _project_signals(signals)
+    frame = _projects_to_frame(projects)
+
+    assert [signal.id for signal in projects] == ["repo"]
+    assert frame.iloc[0]["project"] == "example/agent"
+    assert frame.iloc[0]["stars"] == 123

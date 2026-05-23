@@ -32,6 +32,41 @@ def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
     )
 
 
+def _project_signals(signals: list[SignalRecord]) -> list[SignalRecord]:
+    project_sources = {"GitHub Search", "GitHub Trending", "GitLab Explore", "MCP Servers Directory"}
+    return [signal for signal in signals if signal.source in project_sources and _is_project_url(signal.url)]
+
+
+def _projects_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "score": signal.score,
+                "project": _project_name(signal),
+                "source": signal.source,
+                "stars": signal.metadata.get("stars", ""),
+                "language": signal.metadata.get("language", ""),
+                "summary": signal.summary,
+                "url": signal.url,
+            }
+            for signal in signals
+        ]
+    )
+
+
+def _project_name(signal: SignalRecord) -> str:
+    title = signal.title.removesuffix(" is trending on GitHub")
+    return title if "/" in title else signal.topic or title
+
+
+def _is_project_url(url: str) -> bool:
+    if not url:
+        return False
+    if "github.com/search" in url:
+        return False
+    return any(host in url for host in ("github.com/", "gitlab.com/"))
+
+
 def _domain_score(signal: SignalRecord) -> object:
     for key in (
         "research_score",
@@ -198,6 +233,7 @@ def _render_signal_explorer(signals: list[SignalRecord], filters: dict[str, Any]
 def render_page(page_key: str, page_payload: dict[str, object], filters: dict[str, Any] | None = None) -> None:
     st.subheader(str(page_payload["title"]))
     st.caption(str(page_payload["description"]))
+    signals = list(page_payload.get("signals", []))
 
     if page_key == "profile":
         profile = dict(page_payload.get("profile", {}))
@@ -233,6 +269,14 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
                 st.markdown(f"**{alert.title}**")
                 st.caption(f"{alert.kind} | score {alert.score} | channels: {', '.join(alert.channels)}")
                 st.code(alert.body)
+
+    if page_key == "github_radar":
+        projects = _project_signals(signals)
+        st.subheader("Projects")
+        if projects:
+            st.dataframe(_projects_to_frame(projects), width="stretch", hide_index=True)
+        else:
+            st.info("No project repository signals match the current filters. Clear the sidebar filters or enable live collection.")
 
     if page_key == "skill_radar":
         recommendations = list(page_payload.get("skill_recommendations", []))
@@ -297,7 +341,6 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
             st.subheader("Sentiment Summary")
             st.dataframe(_sentiment_to_frame(summary), width="stretch", hide_index=True)
 
-    signals = list(page_payload.get("signals", []))
     _render_signal_explorer(signals, filters, key_prefix=page_key)
 
 
