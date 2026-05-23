@@ -86,3 +86,33 @@ def test_http_collector_uses_rate_limiter_and_proxy_rotator():
     assert calls[0]["params"] == {"q": "agents"}
     assert calls[0]["proxies"] == {"http": "http://proxy.example:8080", "https": "http://proxy.example:8080"}
     assert "github search" in limiter.last_access
+
+
+def test_http_collector_caches_json_and_text_by_url_and_params():
+    from internet_radar.collectors.base import HTTPCollector
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeResponse:
+        def __init__(self, index: int) -> None:
+            self.index = index
+            self.text = f"text-{index}"
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, int]:
+            return {"index": self.index}
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse(len(calls))
+
+    collector = HTTPCollector(name="Cached Source", category="news", http_get=fake_get, cache_ttl_seconds=60)
+
+    assert collector.get_json("https://api.example.com/search", q="agents") == {"index": 1}
+    assert collector.get_json("https://api.example.com/search", q="agents") == {"index": 1}
+    assert collector.get_json("https://api.example.com/search", q="mcp") == {"index": 2}
+    assert collector.get_text("https://api.example.com/page") == "text-3"
+    assert collector.get_text("https://api.example.com/page") == "text-3"
+    assert len(calls) == 3

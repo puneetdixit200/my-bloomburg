@@ -7,7 +7,7 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 - 64+ source registry covering code, social, news, jobs, hackathons, research, finance, search, and app stores.
 - Live no-key collector layer for GitHub, Hacker News, Reddit JSON, Dev.to, Lobsters, RemoteOK, The Muse, Arbeitnow, Codeforces, arXiv, OpenAlex, Wikipedia Pageviews, DuckDuckGo, Google Trends, YC Companies, SEC EDGAR, Papers With Code, CoinGecko, iTunes, Steam, PyPI, and npm package signals.
 - Parallel collector runner with per-source health reporting so one failing source does not stop the pipeline.
-- Collector utilities for per-source rate limiting, optional proxy rotation, and HTML cleanup for scraper-style sources.
+- Collector utilities for per-source rate limiting, TTL request caching, optional proxy rotation, and HTML cleanup for scraper-style sources.
 - Deterministic sample fallback so the app runs without API keys or network.
 - SQLite persistence in `data/radar.sqlite`.
 - Cross-source validation, deduplication, scoring, and local-first LLM routing.
