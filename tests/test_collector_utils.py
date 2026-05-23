@@ -88,6 +88,85 @@ def test_http_collector_uses_rate_limiter_and_proxy_rotator():
     assert "github search" in limiter.last_access
 
 
+def test_http_collector_post_uses_rate_limiter_and_merges_headers(monkeypatch):
+    from internet_radar.collectors.base import HTTPCollector
+    from internet_radar.utils.rate_limiter import SourceRateLimiter
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        text = "ok"
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, bool]:
+            return {"ok": True}
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return FakeResponse()
+
+    monkeypatch.setenv("INTERNET_RADAR_USER_AGENT", "internet-radar-test/1.0")
+    limiter = SourceRateLimiter(default_interval_seconds=0)
+    collector = HTTPCollector(name="Product Hunt", category="news", rate_limiter=limiter, http_post=fake_post)
+
+    response = collector._post("https://api.example.com/graphql", headers={"Authorization": "Bearer token"}, json={"query": "{}"})
+
+    assert response.json() == {"ok": True}
+    assert calls[0]["headers"] == {"User-Agent": "internet-radar-test/1.0", "Authorization": "Bearer token"}
+    assert calls[0]["json"] == {"query": "{}"}
+    assert "product hunt" in limiter.last_access
+
+
+def test_default_rate_limiter_has_conservative_provider_intervals():
+    from internet_radar.utils.rate_limiter import DEFAULT_RATE_LIMITER, DEFAULT_SOURCE_INTERVALS
+
+    assert DEFAULT_RATE_LIMITER.default_interval_seconds == 0.0
+    assert DEFAULT_SOURCE_INTERVALS["arxiv"] == 3.0
+    assert DEFAULT_SOURCE_INTERVALS["duckduckgo"] == 5.0
+    assert DEFAULT_SOURCE_INTERVALS["reddit json"] == 2.0
+    assert DEFAULT_SOURCE_INTERVALS["brave search"] == 1.0
+
+
+def test_github_collector_uses_token_for_authenticated_rate_limits():
+    from internet_radar.collectors.live import GitHubSearchCollector
+    from internet_radar.utils.rate_limiter import SourceRateLimiter
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, list[dict[str, object]]]:
+            return {
+                "items": [
+                    {
+                        "id": 1,
+                        "full_name": "example/agent",
+                        "stargazers_count": 123,
+                        "html_url": "https://github.com/example/agent",
+                        "topics": ["agents"],
+                    }
+                ]
+            }
+
+    def fake_get(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return FakeResponse()
+
+    collector = GitHubSearchCollector(token="ghp_test")
+    collector.http_get = fake_get
+    collector.rate_limiter = SourceRateLimiter(default_interval_seconds=0)
+
+    records = collector.collect()
+
+    assert records[0].source == "GitHub Search"
+    assert calls[0]["headers"] == {"User-Agent": "internet-radar-v2/0.1", "Authorization": "Bearer ghp_test"}
+    assert calls[0]["params"] == {"q": "agentic ai pushed:>2026-01-01", "sort": "stars", "order": "desc", "per_page": 8}
+
+
 def test_http_collector_caches_json_and_text_by_url_and_params():
     from internet_radar.collectors.base import HTTPCollector
 

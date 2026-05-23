@@ -1303,19 +1303,26 @@ def _money_to_int(value: Any) -> int:
 
 
 class GitHubSearchCollector(HTTPCollector):
-    def __init__(self, topic: str = "agentic ai") -> None:
+    def __init__(self, topic: str = "agentic ai", token: str | None = None) -> None:
         super().__init__(name="GitHub Search", category="code")
         self.topic = topic
+        self.token = token if token is not None else os.getenv("GITHUB_TOKEN", "")
 
     def collect(self) -> list[SignalRecord]:
         try:
-            data = self.get_json(
+            response = self._request(
+                self.http_get,
                 "https://api.github.com/search/repositories",
-                q=f"{self.topic} pushed:>2026-01-01",
-                sort="stars",
-                order="desc",
-                per_page=8,
+                params={
+                    "q": f"{self.topic} pushed:>2026-01-01",
+                    "sort": "stars",
+                    "order": "desc",
+                    "per_page": 8,
+                },
+                headers={"Authorization": f"Bearer {self.token}"} if self.token else None,
             )
+            response.raise_for_status()
+            data = response.json()
             return parse_github_repositories(list(data.get("items", [])))  # type: ignore[union-attr]
         except Exception:
             return sample_signals("code")
@@ -1626,7 +1633,7 @@ class HashnodeCollector(HTTPCollector):
 
     def collect(self) -> list[SignalRecord]:
         try:
-            response = self.http_post("https://gql.hashnode.com", json={"query": self.query}, timeout=self.timeout)
+            response = self._post("https://gql.hashnode.com", json={"query": self.query})
             response.raise_for_status()
             records = parse_hashnode_posts(response.json())
             return records or source_fallback("Hashnode", "news", "hashnode developer articles", 55)
@@ -1696,7 +1703,7 @@ class LeetCodeContestsCollector(HTTPCollector):
 
     def collect(self) -> list[SignalRecord]:
         try:
-            response = self.http_post("https://leetcode.com/graphql", json={"query": self.query}, timeout=self.timeout)
+            response = self._post("https://leetcode.com/graphql", json={"query": self.query})
             response.raise_for_status()
             records = parse_leetcode_contests(response.json())
             return records or source_fallback("LeetCode Contests", "hackathons", "leetcode contests", 60)
@@ -1909,7 +1916,7 @@ class OpenCollectiveCollector(HTTPCollector):
 
     def collect(self) -> list[SignalRecord]:
         try:
-            response = self.http_post("https://api.opencollective.com/graphql/v2", json={"query": self.query}, timeout=self.timeout)
+            response = self._post("https://api.opencollective.com/graphql/v2", json={"query": self.query})
             response.raise_for_status()
             records = parse_opencollective_search(response.json())
             return records or source_fallback("OpenCollective", "finance", "open source funding", 60)
@@ -2083,11 +2090,10 @@ class ProductHuntCollector(HTTPCollector):
         if not self.token:
             return keyed_source_fallback("Product Hunt", "news", "product launches", 55)
         try:
-            response = self.http_post(
+            response = self._post(
                 "https://api.producthunt.com/v2/api/graphql",
                 headers={"Authorization": f"Bearer {self.token}"},
                 json={"query": self.query},
-                timeout=self.timeout,
             )
             response.raise_for_status()
             return parse_producthunt_posts(response.json())
@@ -2145,15 +2151,15 @@ class SemanticScholarCollector(HTTPCollector):
         if not self.api_key:
             return keyed_source_fallback("Semantic Scholar", "research", "semantic scholar papers", 62)
         try:
-            response = self.http_get(
+            response = self._request(
+                self.http_get,
                 "https://api.semanticscholar.org/graph/v1/paper/search",
                 params={
                     "query": self.query,
                     "limit": 20,
                     "fields": "title,abstract,url,citationCount,year",
                 },
-                headers={"x-api-key": self.api_key, "User-Agent": "internet-radar-v2/0.1"},
-                timeout=self.timeout,
+                headers={"x-api-key": self.api_key},
             )
             response.raise_for_status()
             return parse_semantic_scholar_papers(response.json())
@@ -2171,7 +2177,7 @@ class CrunchbaseCollector(HTTPCollector):
         if not self.api_key:
             return keyed_source_fallback("Crunchbase", "finance", "funding rounds", 64)
         try:
-            response = self.http_post(
+            response = self._post(
                 "https://api.crunchbase.com/api/v4/searches/funding_rounds",
                 headers={"X-cb-user-key": self.api_key},
                 json={
@@ -2179,7 +2185,6 @@ class CrunchbaseCollector(HTTPCollector):
                     "order": [{"field_id": "announced_on", "sort": "desc"}],
                     "limit": 20,
                 },
-                timeout=self.timeout,
             )
             response.raise_for_status()
             return parse_crunchbase_funding(response.json())
@@ -2197,11 +2202,11 @@ class BraveSearchCollector(HTTPCollector):
         if not self.api_key:
             return keyed_source_fallback("Brave Search", "search", "brave search intelligence", 58)
         try:
-            response = self.http_get(
+            response = self._request(
+                self.http_get,
                 "https://api.search.brave.com/res/v1/web/search",
                 params={"q": self.query, "count": 10},
                 headers={"X-Subscription-Token": self.api_key, "Accept": "application/json"},
-                timeout=self.timeout,
             )
             response.raise_for_status()
             return parse_brave_search_results(response.json())
@@ -2220,7 +2225,7 @@ class TavilyCollector(HTTPCollector):
         if not self.api_key:
             return keyed_source_fallback("Tavily", "search", "ai search intelligence", 58)
         try:
-            response = self.http_post(
+            response = self._post(
                 "https://api.tavily.com/search",
                 json={
                     "api_key": self.api_key,
@@ -2229,7 +2234,6 @@ class TavilyCollector(HTTPCollector):
                     "include_answer": True,
                     "max_results": 10,
                 },
-                timeout=self.timeout,
             )
             response.raise_for_status()
             return parse_tavily_results(response.json())
