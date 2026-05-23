@@ -106,3 +106,21 @@ def test_dashboard_extracts_project_signals_for_github_radar():
     assert [signal.id for signal in projects] == ["repo"]
     assert frame.iloc[0]["project"] == "example/agent"
     assert frame.iloc[0]["stars"] == 123
+
+
+def test_dashboard_signal_preview_frame_is_static_and_limited():
+    from dashboard.app import _signal_preview_frame
+    from internet_radar.storage.models import SignalRecord
+
+    signals = [
+        SignalRecord(id=str(index), topic="mcp", title=f"Signal {index}", source="GitHub Search", category="code", score=90 - index)
+        for index in range(12)
+    ]
+
+    frame = _signal_preview_frame(signals, limit=5)
+    empty = _signal_preview_frame([])
+
+    assert list(frame.columns) == ["score", "title", "source", "category", "url"]
+    assert len(frame) == 5
+    assert list(empty.columns) == ["score", "title", "source", "category", "url"]
+    assert empty.empty

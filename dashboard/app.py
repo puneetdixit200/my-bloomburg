@@ -32,6 +32,14 @@ def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
     )
 
 
+def _signal_preview_frame(signals: list[SignalRecord], limit: int = 10) -> pd.DataFrame:
+    columns = ["score", "title", "source", "category", "url"]
+    frame = _signals_to_frame(signals)
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+    return frame.head(limit)[columns]
+
+
 def _project_signals(signals: list[SignalRecord]) -> list[SignalRecord]:
     project_sources = {"GitHub Search", "GitHub Trending", "GitLab Explore", "MCP Servers Directory"}
     return [signal for signal in signals if signal.source in project_sources and _is_project_url(signal.url)]
@@ -207,6 +215,9 @@ def _render_signal_explorer(signals: list[SignalRecord], filters: dict[str, Any]
         st.info("No signals for this view yet. Run a live collection or adjust source settings.")
         return
 
+    st.subheader("Visible Data")
+    st.table(_signal_preview_frame(filtered))
+
     chart_cols = st.columns(2)
     category_frame = _category_distribution_frame(filtered)
     if not category_frame.empty:
@@ -274,7 +285,9 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
         projects = _project_signals(signals)
         st.subheader("Projects")
         if projects:
-            st.dataframe(_projects_to_frame(projects), width="stretch", hide_index=True)
+            project_frame = _projects_to_frame(projects)
+            st.table(project_frame.head(12))
+            st.dataframe(project_frame, width="stretch", hide_index=True)
         else:
             st.info("No project repository signals match the current filters. Clear the sidebar filters or enable live collection.")
 
@@ -353,6 +366,8 @@ def render_dashboard(payload: dict[str, dict[str, object]], filters: dict[str, A
     cols[3].metric("Enabled by default", len(enabled_sources()))
 
     st.write(f"LLM route: `{top['llm_status']}`")
+    st.subheader("Top Signals Preview")
+    st.table(_signal_preview_frame(list(top.get("signals", []))))
     tabs = st.tabs([page.title for page in PAGE_DEFINITIONS])
     for tab, page in zip(tabs, PAGE_DEFINITIONS, strict=True):
         with tab:
@@ -367,6 +382,7 @@ def render_page_entry(page_key: str) -> None:
     render_page(page.key, payload[page.key])
 
 
+@st.cache_data(ttl=300, show_spinner="Collecting live signals...")
 def load_payload(use_live_network: bool = False) -> dict[str, dict[str, object]]:
     briefing = run_radar_once(use_live_network=use_live_network)
     profile = load_user_profile()
@@ -388,6 +404,8 @@ def main() -> None:
         default_live = os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1"
         use_live = st.toggle("Use live network collectors", value=default_live)
         st.caption("Off uses deterministic sample signals. On calls no-key public APIs and falls back on errors.")
+        if st.button("Refresh data"):
+            load_payload.clear()
         st.header("Filters")
         categories = st.multiselect(
             "Categories",
@@ -399,10 +417,8 @@ def main() -> None:
         source_options = sorted({source.name for source in SOURCE_REGISTRY})
         source = st.selectbox("Source", [""] + source_options, index=0)
 
-    render_dashboard(
-        load_payload(use_live_network=use_live),
-        filters={"categories": categories, "min_score": min_score, "query": query, "source": source},
-    )
+    payload = load_payload(use_live_network=use_live)
+    render_dashboard(payload, filters={"categories": categories, "min_score": min_score, "query": query, "source": source})
 
 
 if __name__ == "__main__":
