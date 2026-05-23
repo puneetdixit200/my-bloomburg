@@ -1,11 +1,57 @@
 from __future__ import annotations
 
+import os
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+from internet_radar.alerts.alert_manager import build_alerts
+from internet_radar.alerts.dispatcher import AlertDispatchResult, dispatch_alert
+from internet_radar.collectors.live import (
+    AdzunaCollector,
+    ArbeitnowCollector,
+    ArxivCollector,
+    BlueskyCollector,
+    CodeforcesCollector,
+    CratesIOCollector,
+    CrunchbaseCollector,
+    DevToCollector,
+    DevpostCollector,
+    GooglePlayCollector,
+    GoogleTrendsCollector,
+    GitHubSearchCollector,
+    GitHubTrendingCollector,
+    HNAlgoliaCollector,
+    HackerNewsCollector,
+    ITunesCollector,
+    LeetCodeContestsCollector,
+    MLHCollector,
+    MastodonCollector,
+    NPMRegistryCollector,
+    OpenAlexCollector,
+    OpenCollectiveCollector,
+    PackageCollector,
+    ProductHuntCollector,
+    PyPICollector,
+    RSSCollector,
+    RedditJSONCollector,
+    RemoteOKCollector,
+    SECEdgarCollector,
+    SteamCollector,
+    TheMuseCollector,
+    WikipediaPageviewsCollector,
+    YCCompaniesCollector,
+    YCJobsCollector,
+    default_collectors,
+)
+from internet_radar.config.settings import load_user_profile
 from internet_radar.pipeline import run_radar_once
+from internet_radar.storage.models import BriefingPayload
 from internet_radar.storage.models import SignalRecord
+
+CollectorFactory = Callable[[], object]
 
 
 @dataclass(frozen=True)
@@ -39,6 +85,15 @@ class SmartTrigger:
     topic: str
     reason: str
     action: str
+
+
+@dataclass(frozen=True)
+class JobRunResult:
+    job_name: str
+    active_sources: int
+    signals_24h: int
+    source_health: dict[str, str]
+    alert_dispatches: list[AlertDispatchResult]
 
 
 SCHEDULE_GROUPS: list[JobGroup] = [
@@ -100,14 +155,85 @@ SCHEDULE_GROUPS: list[JobGroup] = [
     ),
 ]
 
+JOB_COLLECTOR_FACTORIES: dict[str, list[CollectorFactory]] = {
+    "github_trending_check": [GitHubTrendingCollector],
+    "hackathon_deadline_check": [DevpostCollector, MLHCollector, CodeforcesCollector, LeetCodeContestsCollector],
+    "career_page_watcher": [YCJobsCollector, RemoteOKCollector, TheMuseCollector, ArbeitnowCollector],
+    "hn_frontpage_check": [HackerNewsCollector, HNAlgoliaCollector],
+    "reddit_collector": [RedditJSONCollector],
+    "bluesky_trends": [BlueskyCollector],
+    "mastodon_trends": [MastodonCollector],
+    "devto_trending": [DevToCollector],
+    "rss_all_feeds": [RSSCollector],
+    "remoteok_jobs": [RemoteOKCollector],
+    "github_search_exploding": [GitHubSearchCollector, GitHubTrendingCollector],
+    "producthunt_launches": [ProductHuntCollector],
+    "pypi_npm_velocity": [PyPICollector, NPMRegistryCollector, CratesIOCollector, PackageCollector],
+    "google_trends_update": [GoogleTrendsCollector],
+    "devpost_scraper": [DevpostCollector],
+    "adzuna_fresh_jobs": [AdzunaCollector],
+    "arxiv_paper_collector": [ArxivCollector],
+    "openalex_momentum": [OpenAlexCollector],
+    "crunchbase_funding": [CrunchbaseCollector, OpenCollectiveCollector],
+    "yc_companies_update": [YCCompaniesCollector],
+    "wikipedia_pageviews": [WikipediaPageviewsCollector],
+    "sec_edgar_check": [SECEdgarCollector],
+    "skill_radar_update": [RemoteOKCollector, PyPICollector, NPMRegistryCollector, ArxivCollector],
+    "app_store_pain_mining": [ITunesCollector, GooglePlayCollector, SteamCollector],
+}
+
 
 def collect_high_frequency() -> int:
     briefing = run_radar_once(use_live_network=False)
     return briefing.signals_24h
 
 
+def collectors_for_job(job_name: str, use_live_network: bool = True) -> list[object]:
+    factories = JOB_COLLECTOR_FACTORIES.get(job_name)
+    if not factories:
+        return default_collectors(use_live_network=use_live_network)
+    if not use_live_network:
+        return default_collectors(use_live_network=False)
+    return [factory() for factory in factories]
+
+
+def run_scheduled_job(
+    job_name: str,
+    *,
+    db_path: str | Path | None = None,
+    use_live_network: bool | None = None,
+    dispatch_alerts: bool | None = None,
+) -> JobRunResult:
+    if use_live_network is None:
+        use_live_network = os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1"
+    briefing = run_radar_once(
+        collectors=collectors_for_job(job_name, use_live_network=use_live_network),
+        db_path=db_path,
+        use_live_network=use_live_network,
+    )
+    return JobRunResult(
+        job_name=job_name,
+        active_sources=briefing.active_sources,
+        signals_24h=briefing.signals_24h,
+        source_health=briefing.source_health,
+        alert_dispatches=_maybe_dispatch_alerts(briefing, dispatch_alerts=dispatch_alerts),
+    )
+
+
 def build_job_plan() -> JobPlan:
     return JobPlan(groups=SCHEDULE_GROUPS)
+
+
+def _maybe_dispatch_alerts(briefing: BriefingPayload, dispatch_alerts: bool | None) -> list[AlertDispatchResult]:
+    if dispatch_alerts is None:
+        dispatch_alerts = os.getenv("INTERNET_RADAR_DISPATCH_ALERTS", "0") == "1"
+    if not dispatch_alerts:
+        return []
+    profile = load_user_profile()
+    results: list[AlertDispatchResult] = []
+    for alert in build_alerts(briefing.top_signals, profile):
+        results.extend(dispatch_alert(alert))
+    return results
 
 
 def smart_triggers_for_signals(signals: list[SignalRecord], now: datetime | None = None) -> list[SmartTrigger]:

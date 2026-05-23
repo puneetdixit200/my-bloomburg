@@ -16,6 +16,10 @@ dependencies = [
 test = [
     "pytest>=8.2",
 ]
+vector = [
+    "chromadb>=0.5",
+    "protobuf>=3.20,<4",
+]
 
 [project.scripts]
 internet-radar-run = "internet_radar.cli:main"

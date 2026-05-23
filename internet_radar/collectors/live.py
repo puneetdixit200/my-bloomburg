@@ -1547,13 +1547,14 @@ class MastodonCollector(HTTPCollector):
 
 
 class RSSCollector(HTTPCollector):
-    def __init__(self, config_path: str | Path = "config/rss_feeds.yaml") -> None:
+    def __init__(self, config_path: str | Path = "config/rss_feeds.yaml", max_feeds: int = 24) -> None:
         super().__init__(name="Tech RSS", category="news")
         self.config_path = Path(config_path)
+        self.max_feeds = max_feeds
 
     def collect(self) -> list[SignalRecord]:
         records: list[SignalRecord] = []
-        for feed in self._feeds()[:5]:
+        for feed in self._feeds()[: self.max_feeds]:
             try:
                 text = self.get_text(str(feed["url"]))
                 records.extend(parse_rss_entries(text, source_name=str(feed["name"])))
@@ -1574,15 +1575,24 @@ class RSSCollector(HTTPCollector):
 
 
 class ConfiguredRSSCollector(HTTPCollector):
-    def __init__(self, name: str, category: str, topic: str, score: int, config_path: str | Path = "config/rss_feeds.yaml") -> None:
+    def __init__(
+        self,
+        name: str,
+        category: str,
+        topic: str,
+        score: int,
+        config_path: str | Path = "config/rss_feeds.yaml",
+        max_feeds: int = 24,
+    ) -> None:
         super().__init__(name=name, category=category)
         self.topic = topic
         self.score = score
         self.config_path = Path(config_path)
+        self.max_feeds = max_feeds
 
     def collect(self) -> list[SignalRecord]:
         records: list[SignalRecord] = []
-        for feed in RSSCollector(self.config_path)._feeds()[:5]:
+        for feed in RSSCollector(self.config_path, max_feeds=self.max_feeds)._feeds()[: self.max_feeds]:
             try:
                 text = self.get_text(str(feed["url"]))
                 records.extend(parse_rss_entries(text, source_name=self.name))
@@ -1652,7 +1662,7 @@ class IndieHackersRSSCollector(HTTPCollector):
 
 class CompanyEngineeringBlogsCollector(ConfiguredRSSCollector):
     def __init__(self) -> None:
-        super().__init__(name="Company Engineering Blogs", category="news", topic="engineering blog signals", score=55)
+        super().__init__(name="Company Engineering Blogs", category="news", topic="engineering blog signals", score=55, max_feeds=12)
 
 
 class MLHCollector(HTTPCollector):
@@ -1831,7 +1841,7 @@ class HuggingFacePapersCollector(HTTPCollector):
 
 class ConferenceRSSCollector(ConfiguredRSSCollector):
     def __init__(self) -> None:
-        super().__init__(name="Conference RSS", category="research", topic="conference research signals", score=58)
+        super().__init__(name="Conference RSS", category="research", topic="conference research signals", score=58, max_feeds=12)
 
 
 class WikipediaPageviewsCollector(HTTPCollector):

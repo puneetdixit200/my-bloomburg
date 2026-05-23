@@ -75,6 +75,43 @@ def test_vector_store_search_ranks_semantic_matches():
     assert results[0].similarity > results[1].similarity
 
 
+def test_chroma_vector_store_uses_collection_upsert_and_query():
+    from internet_radar.brain.embed_engine import DeterministicEmbedder
+    from internet_radar.storage.vector_store import ChromaSemanticVectorStore
+
+    class FakeCollection:
+        def __init__(self) -> None:
+            self.documents: list[str] = []
+            self.embeddings: list[list[float]] = []
+
+        def upsert(self, ids, documents, embeddings, metadatas):
+            self.documents = documents
+            self.embeddings = embeddings
+
+        def query(self, query_embeddings, n_results, include):
+            return {"documents": [self.documents[:n_results]], "distances": [[0.2 for _ in self.documents[:n_results]]]}
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.collection = FakeCollection()
+
+        def get_or_create_collection(self, name):
+            self.name = name
+            return self.collection
+
+    client = FakeClient()
+    store = ChromaSemanticVectorStore(client=client, embedder=DeterministicEmbedder(dimensions=8))
+    store.add_signals(
+        [SignalRecord(id="browser", topic="browser agents", title="Browser agents automate websites", source="GitHub", category="code", score=88)]
+    )
+
+    results = store.search("browser automation", limit=1)
+
+    assert client.name == "internet_radar_signals"
+    assert results[0].signal.id == "browser"
+    assert results[0].similarity > 0
+
+
 def test_semantic_clusters_group_related_pain_signals():
     from internet_radar.storage.vector_store import build_semantic_clusters
 

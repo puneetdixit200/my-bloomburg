@@ -11,7 +11,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from internet_radar.scheduler.jobs import ScheduledJob, build_job_plan, collect_high_frequency
+from internet_radar.scheduler.jobs import ScheduledJob, build_job_plan, collect_high_frequency, run_scheduled_job
 
 
 Collector = Callable[[], int]
@@ -23,7 +23,11 @@ def run_cycle(collector: Collector = collect_high_frequency) -> int:
 
 
 def run_named_job(job_name: str, collector: Collector = collect_high_frequency) -> int:
-    return collector()
+    if collector is not collect_high_frequency:
+        return collector()
+    result = run_scheduled_job(job_name)
+    print(f"scheduler job {job_name}: signals_24h={result.signals_24h} active_sources={result.active_sources}")
+    return result.signals_24h
 
 
 def build_scheduler(job_runner: JobRunner | None = None) -> BlockingScheduler:

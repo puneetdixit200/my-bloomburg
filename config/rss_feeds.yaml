@@ -1,11 +1,73 @@
 feeds:
   - name: Hacker News
     url: https://news.ycombinator.com/rss
+    category: social
   - name: Dev.to AI
     url: https://dev.to/feed/tag/ai
+    category: news
   - name: GitHub Blog
     url: https://github.blog/feed/
+    category: code
   - name: OpenAI Blog
     url: https://openai.com/news/rss.xml
+    category: news
   - name: Hugging Face Blog
     url: https://huggingface.co/blog/feed.xml
+    category: research
+  - name: Hugging Face Papers
+    url: https://huggingface.co/papers/rss
+    category: research
+  - name: Google Research
+    url: https://research.google/blog/rss/
+    category: research
+  - name: Google AI Blog
+    url: https://ai.googleblog.com/feeds/posts/default
+    category: research
+  - name: AWS Machine Learning Blog
+    url: https://aws.amazon.com/blogs/machine-learning/feed/
+    category: research
+  - name: Microsoft Research
+    url: https://www.microsoft.com/en-us/research/feed/
+    category: research
+  - name: PyTorch Blog
+    url: https://pytorch.org/blog/feed.xml
+    category: research
+  - name: TensorFlow Blog
+    url: https://blog.tensorflow.org/feeds/posts/default
+    category: research
+  - name: fast.ai
+    url: https://www.fast.ai/index.xml
+    category: research
+  - name: Stack Overflow Blog
+    url: https://stackoverflow.blog/feed/
+    category: news
+  - name: Cloudflare Blog
+    url: https://blog.cloudflare.com/rss/
+    category: news
+  - name: Netflix Tech Blog
+    url: https://netflixtechblog.com/feed
+    category: news
+  - name: Meta Engineering
+    url: https://engineering.fb.com/feed/
+    category: news
+  - name: Martin Fowler
+    url: https://martinfowler.com/feed.atom
+    category: news
+  - name: Simon Willison
+    url: https://simonwillison.net/atom/everything/
+    category: news
+  - name: TechCrunch AI
+    url: https://techcrunch.com/category/artificial-intelligence/feed/
+    category: news
+  - name: The Verge AI
+    url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+    category: news
+  - name: Indie Hackers
+    url: https://www.indiehackers.com/feed
+    category: news
+  - name: Lobsters
+    url: https://lobste.rs/rss
+    category: news
+  - name: HN Agent Search
+    url: https://hnrss.org/newest?q=agent
+    category: social

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 
 from internet_radar.storage.models import SignalRecord
 from internet_radar.storage.migrations import applied_versions, apply_migrations
+from internet_radar.storage.supabase_store import SupabaseRadarStore
 
 
 class RadarStore:
@@ -79,3 +81,10 @@ class RadarStore:
         data = dict(row)
         data["metadata"] = json.loads(data.get("metadata") or "{}")
         return SignalRecord(**data)
+
+
+def create_store(db_path: str | Path | None = None) -> RadarStore | SupabaseRadarStore:
+    backend = os.getenv("INTERNET_RADAR_STORAGE_BACKEND", "sqlite").strip().lower()
+    if backend == "supabase":
+        return SupabaseRadarStore()
+    return RadarStore(db_path or os.getenv("INTERNET_RADAR_DB", "data/radar.sqlite"))

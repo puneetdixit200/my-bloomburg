@@ -132,3 +132,19 @@ def test_scheduler_runner_named_job_delegates_to_collector():
 
     assert run_named_job("github_trending_check", collector=collect_once) == 14
     assert calls == ["collected"]
+
+
+def test_scheduler_named_jobs_have_specific_live_collector_groups():
+    from internet_radar.scheduler.jobs import collectors_for_job
+
+    assert [collector.name for collector in collectors_for_job("github_trending_check", use_live_network=True)] == ["GitHub Trending"]
+    assert {collector.name for collector in collectors_for_job("pypi_npm_velocity", use_live_network=True)} >= {
+        "PyPI",
+        "npm Registry",
+        "crates.io",
+    }
+    assert {collector.name for collector in collectors_for_job("app_store_pain_mining", use_live_network=True)} == {
+        "iTunes App Store",
+        "Google Play",
+        "Steam",
+    }

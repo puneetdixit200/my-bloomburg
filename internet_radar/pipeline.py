@@ -7,7 +7,7 @@ from internet_radar.brain.llm_router import LLMRouter
 from internet_radar.collectors.live import default_collectors
 from internet_radar.collectors.runner import collect_from_sources
 from internet_radar.signals.deduplicator import deduplicate_signals
-from internet_radar.storage.db import RadarStore
+from internet_radar.storage.db import create_store
 from internet_radar.storage.models import BriefingPayload, SignalRecord
 
 
@@ -25,7 +25,7 @@ def run_radar_once(
     signals = [signal for result in collector_results for signal in result.signals]
 
     deduped = deduplicate_signals(signals)
-    store = RadarStore(db_path or os.getenv("INTERNET_RADAR_DB", "data/radar.sqlite"))
+    store = create_store(db_path or os.getenv("INTERNET_RADAR_DB", "data/radar.sqlite"))
     store.upsert_signals(deduped)
     top_signals = store.list_signals(limit=100)
     router = LLMRouter()

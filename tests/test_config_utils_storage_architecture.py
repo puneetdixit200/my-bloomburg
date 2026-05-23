@@ -58,3 +58,57 @@ def test_storage_migrations_record_schema_versions(tmp_path):
 
     assert {"signals", "schema_migrations"} <= tables
     assert {"idx_signals_category", "idx_signals_score"} <= indexes
+
+
+def test_supabase_store_upserts_and_lists_via_rest_without_client_dependency():
+    from internet_radar.storage.models import SignalRecord
+    from internet_radar.storage.supabase_store import SupabaseRadarStore
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def __init__(self, payload=None) -> None:
+            self.payload = payload if payload is not None else []
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return self.payload
+
+    def fake_post(url, **kwargs):
+        calls.append({"method": "post", "url": url, **kwargs})
+        return FakeResponse()
+
+    def fake_get(url, **kwargs):
+        calls.append({"method": "get", "url": url, **kwargs})
+        return FakeResponse(
+            [
+                SignalRecord(
+                    id="sig-1",
+                    topic="browser agents",
+                    title="Browser agents rise",
+                    source="GitHub",
+                    category="code",
+                    score=88,
+                ).as_row()
+            ]
+        )
+
+    store = SupabaseRadarStore(
+        url="https://example.supabase.co",
+        api_key="service-key",
+        http_post=fake_post,
+        http_get=fake_get,
+    )
+
+    store.upsert_signals(
+        [SignalRecord(id="sig-1", topic="browser agents", title="Browser agents rise", source="GitHub", category="code", score=88)]
+    )
+    signals = store.list_signals(category="code")
+
+    assert signals[0].id == "sig-1"
+    assert calls[0]["url"] == "https://example.supabase.co/rest/v1/signals"
+    assert calls[0]["headers"]["Authorization"] == "Bearer service-key"
+    assert calls[0]["params"]["on_conflict"] == "id"
+    assert calls[1]["params"]["category"] == "eq.code"

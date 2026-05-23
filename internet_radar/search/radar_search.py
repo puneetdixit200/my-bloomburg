@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from internet_radar.brain.deep_dive import build_deep_dive
 from internet_radar.brain.relevance_scorer import score_signal_relevance
 from internet_radar.storage.models import SignalRecord, UserProfile
+from internet_radar.storage.vector_store import create_vector_store
 
 
 @dataclass(frozen=True)
@@ -15,7 +16,13 @@ class SearchResult:
     reasons: list[str]
 
 
-def search_signals(signals: list[SignalRecord], query: str, profile: UserProfile | None = None, limit: int = 20) -> list[SearchResult]:
+def search_signals(
+    signals: list[SignalRecord],
+    query: str,
+    profile: UserProfile | None = None,
+    limit: int = 20,
+    include_semantic: bool = False,
+) -> list[SearchResult]:
     terms = _query_terms(query)
     results: list[SearchResult] = []
     for signal in signals:
@@ -33,7 +40,10 @@ def search_signals(signals: list[SignalRecord], query: str, profile: UserProfile
             reasons.extend(relevance.reasons)
         results.append(SearchResult(signal=signal, match_score=match_score, reasons=reasons))
 
-    return sorted(results, key=lambda result: (result.match_score, result.signal.score), reverse=True)[:limit]
+    ranked = sorted(results, key=lambda result: (result.match_score, result.signal.score), reverse=True)
+    if include_semantic and len(ranked) < limit and signals:
+        ranked = _merge_semantic_results(ranked, signals, query, limit)
+    return ranked[:limit]
 
 
 def analyze_query(
@@ -41,8 +51,9 @@ def analyze_query(
     query: str,
     profile: UserProfile | None = None,
     include_deep_dive: bool = False,
+    include_semantic: bool = False,
 ) -> dict[str, object]:
-    results = search_signals(signals, query, profile=profile)
+    results = search_signals(signals, query, profile=profile, include_semantic=include_semantic)
     matched_signals = [result.signal for result in results]
     categories = Counter(signal.category for signal in matched_signals)
     sources = {signal.source for signal in matched_signals}
@@ -72,3 +83,31 @@ def _query_terms(query: str) -> list[str]:
 
 def _signal_text(signal: SignalRecord) -> str:
     return f"{signal.topic} {signal.title} {signal.summary} {signal.source} {signal.category}".lower()
+
+
+def _merge_semantic_results(
+    ranked: list[SearchResult],
+    signals: list[SignalRecord],
+    query: str,
+    limit: int,
+) -> list[SearchResult]:
+    seen = {str(result.signal.id) for result in ranked}
+    try:
+        vector_store = create_vector_store()
+        vector_store.add_signals(signals)
+        semantic_results = vector_store.search(query, limit=limit)
+    except Exception:
+        return ranked
+    for result in semantic_results:
+        signal_id = str(result.signal.id)
+        if signal_id in seen:
+            continue
+        seen.add(signal_id)
+        ranked.append(
+            SearchResult(
+                signal=result.signal,
+                match_score=min(int(result.similarity * 100) + result.signal.score // 2, 200),
+                reasons=[f"semantic:{result.similarity:.2f}"],
+            )
+        )
+    return sorted(ranked, key=lambda result: (result.match_score, result.signal.score), reverse=True)

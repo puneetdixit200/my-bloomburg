@@ -14,18 +14,18 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 - Cross-source validation, deduplication, scoring, and local-first LLM routing.
 - Cross-source agreement matrix with architecture multipliers for weak, strong, and act-now signals.
 - Dedicated research and funding scorers for academic momentum and market-validation signals.
-- Space-conscious local embeddings, optional Ollama/Cohere embedding routing, vector search, and semantic clusters for related signals without requiring a heavy vector database.
+- Space-conscious local embeddings, optional ChromaDB vector persistence, Ollama/Cohere embedding routing, vector search, and semantic clusters for related signals.
 - Deterministic sentiment/frustration scoring and startup gap clustering for pain-heavy social and app-store signals.
 - Profile-aware relevance scoring from `config/interests.yaml`, including skills, interests, goals, blocked topics, alert threshold, and suggested Radar Search queries.
 - Local-first LLM routing with Groq, Gemini, and OpenRouter online free-tier choices for heavy, huge-context, and overflow analysis, plus Radar Search deep-dive summaries.
 - Architecture-style alert templates for hackathons, startup gaps, research signals, funding signals, and skill radar items, filtered by profile threshold and notification channels.
 - Multi-channel alert dispatch adapters for ntfy, Telegram, Discord, and Mailgun email, with credential-free dry-run coverage in tests.
 - Architecture-style daily briefing and skill learning recommendations derived from job, code, and research momentum.
-- APScheduler-backed job catalog for the architecture cadence map, plus smart triggers for high scores, 3-source topic spikes, and hackathon crowd jumps.
+- APScheduler-backed job catalog for the architecture cadence map, with named jobs wired to source-specific collectors/actions plus smart triggers for high scores, 3-source topic spikes, and hackathon crowd jumps.
 - Scheduler priority queue so immediate alerts, deep analysis, and crowd warnings run before routine cadence jobs.
 - Special intelligence modules for abandoned-tool opportunities, conference topic radar, salary velocity, and early wave prediction.
 - Ollama integration with installed local models such as `qwen2.5:0.5b`; rule fallback when Ollama is unavailable.
-- Streamlit dashboard with all 13 architecture pages.
+- Streamlit dashboard with all 13 architecture pages, interactive filters, charts, CSV export, and signal drilldowns.
 - Pytest coverage for pipeline, storage, scoring, collectors, LLM routing, dashboard smoke paths, and Streamlit rendering.
 
 ## Setup
@@ -35,10 +35,60 @@ uv sync --python 3.12 --extra test
 cp .env.example .env
 ```
 
+The same commands work on macOS, Linux, and Windows PowerShell. On Windows, use `.venv\Scripts\Activate.ps1` if you create a manual virtualenv instead of using `uv`.
+
 The app defaults to sample data to keep it reliable and fast. To call public no-key APIs, set:
 
 ```bash
 export INTERNET_RADAR_USE_LIVE=1
+```
+
+`config/rss_feeds.yaml` ships with 20+ feeds. Keep adding feeds there; the RSS collectors read the file directly.
+
+## Storage And Vectors
+
+SQLite is the default storage backend:
+
+```bash
+export INTERNET_RADAR_STORAGE_BACKEND=sqlite
+export INTERNET_RADAR_DB=data/radar.sqlite
+```
+
+Supabase is ready through REST keys:
+
+```bash
+export INTERNET_RADAR_STORAGE_BACKEND=supabase
+export SUPABASE_URL=https://your-project.supabase.co
+export SUPABASE_SERVICE_ROLE_KEY=your-key
+export SUPABASE_TABLE=signals
+```
+
+ChromaDB is optional and used automatically when installed, or explicitly with:
+
+```bash
+uv sync --extra test --extra vector
+# or, without uv:
+python -m pip install -r requirements-vector.txt
+export INTERNET_RADAR_VECTOR_BACKEND=chroma
+export INTERNET_RADAR_CHROMA_PATH=data/chroma
+```
+
+Set `INTERNET_RADAR_VECTOR_BACKEND=deterministic` to stay fully lightweight.
+
+## Alerts
+
+All alert paths are wired. Add the relevant env keys and set dispatch on:
+
+```bash
+export INTERNET_RADAR_DISPATCH_ALERTS=1
+export INTERNET_RADAR_NTFY_TOPIC=your-topic
+export TELEGRAM_BOT_TOKEN=...
+export TELEGRAM_CHAT_ID=...
+export DISCORD_WEBHOOK_URL=...
+export MAILGUN_DOMAIN=...
+export MAILGUN_API_KEY=...
+export INTERNET_RADAR_EMAIL_TO=you@example.com
+export INTERNET_RADAR_EMAIL_FROM=radar@example.com
 ```
 
 ## Run Tests

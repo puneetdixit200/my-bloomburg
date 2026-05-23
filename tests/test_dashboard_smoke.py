@@ -57,3 +57,17 @@ def test_streamlit_app_import_is_side_effect_safe():
 
     assert callable(app.main)
     assert callable(app.render_dashboard)
+
+
+def test_dashboard_signal_filters_are_shared_across_pages():
+    from dashboard.app import _apply_filters
+    from internet_radar.storage.models import SignalRecord
+
+    signals = [
+        SignalRecord(id="code", topic="mcp", title="MCP repo spike", source="GitHub Search", category="code", score=91),
+        SignalRecord(id="job", topic="ai intern", title="AI internship", source="RemoteOK", category="jobs", score=70),
+    ]
+
+    filtered = _apply_filters(signals, {"categories": ["code"], "min_score": 80, "query": "repo", "source": "GitHub Search"})
+
+    assert [signal.id for signal in filtered] == ["code"]

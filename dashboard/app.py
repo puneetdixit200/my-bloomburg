@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 import os
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -124,21 +125,95 @@ def _objects_to_frame(items: list[object]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def render_page(page_key: str, page_payload: dict[str, object]) -> None:
+def _category_distribution_frame(signals: list[SignalRecord]) -> pd.DataFrame:
+    if not signals:
+        return pd.DataFrame()
+    frame = _signals_to_frame(signals)
+    return frame.groupby("category", as_index=False).size().rename(columns={"size": "signals"})
+
+
+def _source_distribution_frame(signals: list[SignalRecord]) -> pd.DataFrame:
+    if not signals:
+        return pd.DataFrame()
+    frame = _signals_to_frame(signals)
+    return frame.groupby("source", as_index=False)["score"].mean().sort_values("score", ascending=False).head(12)
+
+
+def _apply_filters(signals: list[SignalRecord], filters: dict[str, Any] | None = None) -> list[SignalRecord]:
+    filters = filters or {}
+    categories = set(filters.get("categories") or [])
+    source = str(filters.get("source") or "")
+    query = str(filters.get("query") or "").strip().lower()
+    min_score = int(filters.get("min_score", 0))
+    filtered: list[SignalRecord] = []
+    for signal in signals:
+        haystack = f"{signal.topic} {signal.title} {signal.summary} {signal.source} {signal.category}".lower()
+        if categories and signal.category not in categories:
+            continue
+        if source and signal.source != source:
+            continue
+        if query and query not in haystack:
+            continue
+        if signal.score < min_score:
+            continue
+        filtered.append(signal)
+    return filtered
+
+
+def _render_signal_explorer(signals: list[SignalRecord], filters: dict[str, Any] | None = None, key_prefix: str = "signals") -> None:
+    filtered = _apply_filters(signals, filters)
+    cols = st.columns(4)
+    cols[0].metric("Signals in view", len(filtered))
+    cols[1].metric("Avg score", f"{sum(signal.score for signal in filtered) / max(len(filtered), 1):.1f}")
+    cols[2].metric("Sources", len({signal.source for signal in filtered}))
+    cols[3].metric("Topics", len({signal.topic for signal in filtered}))
+
+    if not filtered:
+        st.info("No signals for this view yet. Run a live collection or adjust source settings.")
+        return
+
+    chart_cols = st.columns(2)
+    category_frame = _category_distribution_frame(filtered)
+    if not category_frame.empty:
+        chart_cols[0].bar_chart(category_frame, x="category", y="signals")
+    source_frame = _source_distribution_frame(filtered)
+    if not source_frame.empty:
+        chart_cols[1].bar_chart(source_frame, x="source", y="score")
+
+    frame = _signals_to_frame(filtered)
+    st.dataframe(frame, width="stretch", hide_index=True)
+    st.download_button(
+        "Download CSV",
+        frame.to_csv(index=False).encode("utf-8"),
+        file_name="internet-radar-signals.csv",
+        mime="text/csv",
+        key=f"download-{key_prefix}",
+    )
+    selected = st.selectbox("Inspect signal", [signal.title for signal in filtered], key=f"inspect-{key_prefix}")
+    signal = next(item for item in filtered if item.title == selected)
+    with st.expander("Signal detail", expanded=False):
+        st.json(signal.model_dump(mode="json"))
+
+
+def render_page(page_key: str, page_payload: dict[str, object], filters: dict[str, Any] | None = None) -> None:
     st.subheader(str(page_payload["title"]))
     st.caption(str(page_payload["description"]))
 
     if page_key == "profile":
         profile = dict(page_payload.get("profile", {}))
+        columns = st.columns(3)
+        columns[0].metric("Skills", len(profile.get("skills", [])))
+        columns[1].metric("Interests", len(profile.get("interests", [])))
+        columns[2].metric("Alert threshold", int(profile.get("alert_threshold", 0)))
         st.json(profile)
         personalized = list(page_payload.get("personalized_signals", []))
         if personalized:
             st.subheader("Personalized Feed")
-            st.dataframe(_signals_to_frame(personalized), width="stretch", hide_index=True)
+            _render_signal_explorer(personalized, filters, key_prefix="profile-personalized")
         return
 
     if page_key == "radar_search":
-        st.write("Suggested queries")
+        st.text_input("Search collected signals", value=str((filters or {}).get("query") or "browser agents"), key="radar-search-query")
         st.json(page_payload.get("query_analysis", {}))
 
     if page_key == "briefing":
@@ -223,13 +298,10 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
             st.dataframe(_sentiment_to_frame(summary), width="stretch", hide_index=True)
 
     signals = list(page_payload.get("signals", []))
-    if signals:
-        st.dataframe(_signals_to_frame(signals), width="stretch", hide_index=True)
-    else:
-        st.info("No signals for this view yet. Run a live collection or adjust source settings.")
+    _render_signal_explorer(signals, filters, key_prefix=page_key)
 
 
-def render_dashboard(payload: dict[str, dict[str, object]]) -> None:
+def render_dashboard(payload: dict[str, dict[str, object]], filters: dict[str, Any] | None = None) -> None:
     top = payload["briefing"]
     cols = st.columns(4)
     cols[0].metric("Active sources", int(top["active_sources"]))
@@ -241,7 +313,7 @@ def render_dashboard(payload: dict[str, dict[str, object]]) -> None:
     tabs = st.tabs([page.title for page in PAGE_DEFINITIONS])
     for tab, page in zip(tabs, PAGE_DEFINITIONS, strict=True):
         with tab:
-            render_page(page.key, payload[page.key])
+            render_page(page.key, payload[page.key], filters=filters)
 
 
 def render_page_entry(page_key: str) -> None:
@@ -273,8 +345,21 @@ def main() -> None:
         default_live = os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1"
         use_live = st.toggle("Use live network collectors", value=default_live)
         st.caption("Off uses deterministic sample signals. On calls no-key public APIs and falls back on errors.")
+        st.header("Filters")
+        categories = st.multiselect(
+            "Categories",
+            ["code", "social", "news", "jobs", "hackathons", "research", "finance", "search", "app_stores"],
+            default=[],
+        )
+        min_score = st.slider("Minimum score", min_value=0, max_value=100, value=0, step=5)
+        query = st.text_input("Search text", value="")
+        source_options = sorted({source.name for source in SOURCE_REGISTRY})
+        source = st.selectbox("Source", [""] + source_options, index=0)
 
-    render_dashboard(load_payload(use_live_network=use_live))
+    render_dashboard(
+        load_payload(use_live_network=use_live),
+        filters={"categories": categories, "min_score": min_score, "query": query, "source": source},
+    )
 
 
 if __name__ == "__main__":

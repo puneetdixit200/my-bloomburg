@@ -63,6 +63,9 @@ def test_docker_compose_declares_architecture_services():
     assert services["dashboard"]["environment"]["COHERE_API_KEY"] == "${COHERE_API_KEY:-}"
     assert services["dashboard"]["environment"]["GROQ_API_KEY"] == "${GROQ_API_KEY:-}"
     assert services["dashboard"]["environment"]["LIBRARIES_IO_API_KEY"] == "${LIBRARIES_IO_API_KEY:-}"
+    assert services["dashboard"]["environment"]["INTERNET_RADAR_STORAGE_BACKEND"] == "${INTERNET_RADAR_STORAGE_BACKEND:-sqlite}"
+    assert services["dashboard"]["environment"]["SUPABASE_URL"] == "${SUPABASE_URL:-}"
+    assert services["dashboard"]["environment"]["INTERNET_RADAR_VECTOR_BACKEND"] == "${INTERNET_RADAR_VECTOR_BACKEND:-auto}"
     assert "radar-data" in compose["volumes"]
 
 

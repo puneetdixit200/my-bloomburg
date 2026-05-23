@@ -98,6 +98,19 @@ def test_radar_search_returns_query_analysis_and_ranked_matches():
     assert analysis["personal_relevance"] >= 80
 
 
+def test_radar_search_semantic_expansion_is_opt_in():
+    from internet_radar.search.radar_search import search_signals
+    from internet_radar.storage.models import SignalRecord
+
+    signals = [
+        SignalRecord(id="a", topic="browser agents", title="Browser agents exploding", source="GitHub Search", category="code", score=88),
+        SignalRecord(id="b", topic="css", title="CSS framework", source="Dev.to", category="news", score=65),
+    ]
+
+    assert [result.signal.id for result in search_signals(signals, "browser agents")] == ["a"]
+    assert len(search_signals(signals, "browser agents", include_semantic=True)) >= 1
+
+
 def test_dashboard_payload_exposes_profile_and_search_context():
     from internet_radar.dashboard_data import build_dashboard_payload
     from internet_radar.storage.models import UserProfile
