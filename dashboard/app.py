@@ -66,6 +66,22 @@ def _semantic_clusters_to_frame(clusters: list[object]) -> pd.DataFrame:
     )
 
 
+def _skill_recommendations_to_frame(recommendations: list[object]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "score": getattr(recommendation, "score", 0),
+                "skill": getattr(recommendation, "skill", ""),
+                "signals": getattr(recommendation, "demand_signals", 0),
+                "sources": ", ".join(getattr(recommendation, "sources", [])),
+                "topics": ", ".join(getattr(recommendation, "topics", [])),
+                "next_step": (getattr(recommendation, "learning_path", []) or [""])[0],
+            }
+            for recommendation in recommendations
+        ]
+    )
+
+
 def render_page(page_key: str, page_payload: dict[str, object]) -> None:
     st.subheader(str(page_payload["title"]))
     st.caption(str(page_payload["description"]))
@@ -84,6 +100,10 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
         st.json(page_payload.get("query_analysis", {}))
 
     if page_key == "briefing":
+        daily_briefing = page_payload.get("daily_briefing", {})
+        if isinstance(daily_briefing, dict) and daily_briefing:
+            st.subheader("Daily Brief")
+            st.write(str(daily_briefing.get("narrative", "")))
         alerts = list(page_payload.get("alerts", []))
         if alerts:
             st.subheader("Act Now")
@@ -91,6 +111,12 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
                 st.markdown(f"**{alert.title}**")
                 st.caption(f"{alert.kind} | score {alert.score} | channels: {', '.join(alert.channels)}")
                 st.code(alert.body)
+
+    if page_key == "skill_radar":
+        recommendations = list(page_payload.get("skill_recommendations", []))
+        if recommendations:
+            st.subheader("Learning Path")
+            st.dataframe(_skill_recommendations_to_frame(recommendations), width="stretch", hide_index=True)
 
     if page_key in {"startup_gaps", "app_store_pain"}:
         gap_key = "pain_clusters" if page_key == "app_store_pain" else "gap_clusters"

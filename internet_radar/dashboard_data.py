@@ -4,7 +4,9 @@ from collections import defaultdict
 from typing import Any
 
 from internet_radar.alerts.alert_manager import build_alerts
+from internet_radar.brain.briefing_writer import write_daily_briefing
 from internet_radar.brain.relevance_scorer import rank_for_profile
+from internet_radar.brain.skill_recommender import recommend_skills
 from internet_radar.search.radar_search import analyze_query
 from internet_radar.signals.gap_finder import find_startup_gaps
 from internet_radar.signals.sentiment_pipeline import enrich_signals_with_sentiment, summarize_sentiment
@@ -51,6 +53,8 @@ def build_dashboard_payload(
     }
     gap_clusters = find_startup_gaps(all_signals)
     semantic_clusters = build_semantic_clusters(all_signals)
+    daily_briefing = write_daily_briefing(all_signals, active_sources=active_sources, llm_status=llm_status)
+    skill_recommendations = recommend_skills(all_signals, profile=profile)
     payload: dict[str, dict[str, Any]] = {}
     for page in PAGE_DEFINITIONS:
         if page.category == "all":
@@ -73,9 +77,11 @@ def build_dashboard_payload(
             "llm_status": llm_status,
             "personalized_signals": personalized_signals,
             "alerts": alerts,
+            "daily_briefing": daily_briefing,
             "gap_clusters": gap_clusters,
             "pain_clusters": gap_clusters,
             "semantic_clusters": semantic_clusters,
+            "skill_recommendations": skill_recommendations,
             "sentiment_summary": summarize_sentiment(page_signals),
             "profile": profile.model_dump(),
             "suggested_queries": suggested_queries,
