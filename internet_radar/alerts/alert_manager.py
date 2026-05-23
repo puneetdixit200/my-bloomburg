@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
+from internet_radar.alerts.alert_templates import alert_title, render_alert_template
 from internet_radar.storage.models import SignalRecord, UserProfile
 
 
@@ -38,26 +38,13 @@ def build_alerts(signals: list[SignalRecord], profile: UserProfile | None = None
 
 def format_alert(signal: SignalRecord, channels: list[str] | None = None, score: int | None = None) -> AlertMessage:
     kind = _alert_kind(signal)
-    title = _alert_title(kind)
-    metadata = signal.metadata
     resolved_score = score if score is not None else _alert_score(signal)
-
-    if kind == "HACKATHON":
-        body = _format_hackathon(signal, metadata, resolved_score)
-    elif kind == "STARTUP_GAP":
-        body = _format_startup_gap(signal, metadata, resolved_score)
-    elif kind == "RESEARCH_SIGNAL":
-        body = _format_research(signal, metadata, resolved_score)
-    elif kind == "FUNDING_ALERT":
-        body = _format_funding(signal, metadata, resolved_score)
-    else:
-        body = _format_skill(signal, metadata, resolved_score)
 
     return AlertMessage(
         signal_id=str(signal.id),
         kind=kind,
-        title=title,
-        body=body,
+        title=alert_title(kind),
+        body=render_alert_template(kind, signal, resolved_score),
         channels=channels or ["ntfy"],
         score=resolved_score,
     )
@@ -83,128 +70,6 @@ def _alert_kind(signal: SignalRecord) -> str:
     if signal.metadata.get("pain_level") or signal.metadata.get("complaint_count") or signal.category in {"social", "app_stores"}:
         return "STARTUP_GAP"
     return "SKILL_RADAR"
-
-
-def _alert_title(kind: str) -> str:
-    return {
-        "HACKATHON": "HIGH OPPORTUNITY - HACKATHON",
-        "STARTUP_GAP": "STARTUP GAP DETECTED",
-        "RESEARCH_SIGNAL": "ACADEMIC SIGNAL -> FUTURE TREND",
-        "FUNDING_ALERT": "VC MONEY DETECTED -> SECTOR SIGNAL",
-        "SKILL_RADAR": "SKILL TO LEARN NOW",
-    }.get(kind, kind.replace("_", " "))
-
-
-def _format_hackathon(signal: SignalRecord, metadata: dict[str, Any], score: int) -> str:
-    sponsors = _join(metadata.get("sponsors"), default="unknown")
-    return "\n".join(
-        [
-            "HIGH OPPORTUNITY - HACKATHON",
-            "",
-            f"Name: {signal.title}",
-            f"Prize: {_money(metadata.get('prize'))}",
-            f"Teams now: {metadata.get('participants', 'unknown')}",
-            f"Deadline: {metadata.get('days_left', 'unknown')} days",
-            f"Remote: {metadata.get('remote', 'unknown')}",
-            f"Sponsors: {sponsors}",
-            f"Theme: {metadata.get('theme', signal.topic)}",
-            "",
-            f"SCORE: {score}/100",
-            "",
-            "WHY NOW:",
-            str(metadata.get("reasoning", signal.summary or "High-scoring opportunity signal.")),
-            signal.url,
-        ]
-    ).strip()
-
-
-def _format_startup_gap(signal: SignalRecord, metadata: dict[str, Any], score: int) -> str:
-    return "\n".join(
-        [
-            "STARTUP GAP DETECTED",
-            "",
-            f"Category: {signal.topic}",
-            f"Pain Level: {metadata.get('pain_level', 'unknown')}/10",
-            f"Complaints found: {metadata.get('complaint_count', 'unknown')}",
-            "",
-            "TOP PAIN QUOTE:",
-            str(metadata.get("best_quote", signal.summary or signal.title)),
-            "",
-            f"GAP SCORE: {score}/100",
-            signal.url,
-        ]
-    ).strip()
-
-
-def _format_research(signal: SignalRecord, metadata: dict[str, Any], score: int) -> str:
-    return "\n".join(
-        [
-            "ACADEMIC SIGNAL -> FUTURE TREND",
-            "",
-            f"Topic: {signal.topic}",
-            f"Papers this week: {metadata.get('papers_week', 'unknown')} (+{metadata.get('growth', 'unknown')}% vs last week)",
-            f"Top paper: {signal.title}",
-            "",
-            "WHY MATTERS:",
-            "Academic spike now can precede industry demand.",
-            "",
-            f"SKILL TO LEARN: {metadata.get('recommended_skill', signal.topic)}",
-            f"SCORE: {score}/100",
-            signal.url,
-        ]
-    ).strip()
-
-
-def _format_funding(signal: SignalRecord, metadata: dict[str, Any], score: int) -> str:
-    return "\n".join(
-        [
-            "VC MONEY DETECTED -> SECTOR SIGNAL",
-            "",
-            f"Company: {metadata.get('company', signal.title)}",
-            f"Amount: {_money(metadata.get('amount'))}",
-            f"Sector: {metadata.get('sector', signal.topic)}",
-            "",
-            "WHAT THIS MEANS:",
-            str(metadata.get("analysis", signal.summary or "Funding validates market demand.")),
-            "",
-            f"SCORE: {score}/100",
-            signal.url,
-        ]
-    ).strip()
-
-
-def _format_skill(signal: SignalRecord, metadata: dict[str, Any], score: int) -> str:
-    skill = metadata.get("skill", signal.topic)
-    return "\n".join(
-        [
-            "SKILL TO LEARN NOW",
-            "",
-            f"Skill: {skill}",
-            f"Job postings: +{metadata.get('job_growth', 'unknown')}% this month",
-            f"GitHub repos: +{metadata.get('github_growth', 'unknown')}% this month",
-            f"Papers: +{metadata.get('paper_growth', 'unknown')}% this month",
-            "",
-            f"Opportunity: {signal.title}",
-            f"SCORE: {score}/100",
-            signal.url,
-        ]
-    ).strip()
-
-
-def _money(value: object) -> str:
-    if isinstance(value, (int, float)):
-        return f"${value:,.0f}"
-    if value:
-        return str(value)
-    return "unknown"
-
-
-def _join(value: object, default: str = "") -> str:
-    if isinstance(value, list):
-        return ", ".join(str(item) for item in value)
-    if value:
-        return str(value)
-    return default
 
 
 def _is_blocked(signal: SignalRecord, profile: UserProfile) -> bool:

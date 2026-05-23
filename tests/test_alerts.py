@@ -124,3 +124,91 @@ def test_dashboard_payload_includes_profile_threshold_alerts():
     assert payload["briefing"]["alerts"][0].signal_id == "hack-2"
     assert payload["briefing"]["alerts"][0].channels == ["ntfy"]
     assert payload["briefing"]["alerts"][0].score == 93
+
+
+def test_alert_templates_are_standalone_and_safe_for_missing_fields():
+    from internet_radar.alerts.alert_templates import ALERT_TEMPLATES, render_alert_template
+
+    signal = SignalRecord(
+        id="funding-2",
+        topic="agent devtools",
+        title="Agent devtools seed round",
+        source="SEC EDGAR",
+        category="finance",
+        score=89,
+    )
+
+    body = render_alert_template("FUNDING_ALERT", signal, score=91)
+
+    assert {"HACKATHON", "STARTUP_GAP", "RESEARCH_SIGNAL", "FUNDING_ALERT", "SKILL_RADAR"} <= set(ALERT_TEMPLATES)
+    assert "VC MONEY DETECTED -> SECTOR SIGNAL" in body
+    assert "Company: Agent devtools seed round" in body
+    assert "Amount: unknown" in body
+    assert "SCORE: 91/100" in body
+
+
+def test_alert_dispatcher_routes_all_configured_channels_without_real_network():
+    from internet_radar.alerts.alert_manager import AlertMessage
+    from internet_radar.alerts.dispatcher import dispatch_alert
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeResponse:
+        ok = True
+        status_code = 200
+        text = "ok"
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse()
+
+    alert = AlertMessage(
+        signal_id="skill-1",
+        kind="SKILL_RADAR",
+        title="SKILL TO LEARN NOW",
+        body="Skill: Playwright",
+        channels=["ntfy", "telegram", "discord", "email"],
+        score=94,
+    )
+
+    results = dispatch_alert(
+        alert,
+        config={
+            "ntfy_topic": "radar-test",
+            "telegram_bot_token": "token",
+            "telegram_chat_id": "chat",
+            "discord_webhook_url": "https://discord.example/webhook",
+            "mailgun_domain": "mg.example.com",
+            "mailgun_api_key": "key",
+            "email_to": "me@example.com",
+            "email_from": "radar@example.com",
+        },
+        http_post=fake_post,
+    )
+
+    assert [result.channel for result in results] == ["ntfy", "telegram", "discord", "email"]
+    assert all(result.sent for result in results)
+    assert calls[0][0] == "https://ntfy.sh/radar-test"
+    assert calls[1][0] == "https://api.telegram.org/bottoken/sendMessage"
+    assert calls[2][0] == "https://discord.example/webhook"
+    assert calls[3][0] == "https://api.mailgun.net/v3/mg.example.com/messages"
+
+
+def test_alert_dispatcher_skips_channels_without_credentials():
+    from internet_radar.alerts.alert_manager import AlertMessage
+    from internet_radar.alerts.dispatcher import dispatch_alert
+
+    alert = AlertMessage(
+        signal_id="skill-1",
+        kind="SKILL_RADAR",
+        title="SKILL TO LEARN NOW",
+        body="Skill: Playwright",
+        channels=["telegram", "discord", "email"],
+        score=94,
+    )
+
+    results = dispatch_alert(alert, config={}, http_post=lambda *args, **kwargs: None)
+
+    assert [result.channel for result in results] == ["telegram", "discord", "email"]
+    assert not any(result.sent for result in results)
+    assert all("missing" in result.detail for result in results)
