@@ -105,3 +105,30 @@ def test_priority_queue_is_stable_for_equal_priority_tasks():
     )
 
     assert [task.name for task in queue.drain()] == ["immediate_alert:first", "immediate_alert:second"]
+
+
+def test_scheduler_runner_registers_architecture_jobs_with_apscheduler():
+    from internet_radar.scheduler.jobs import build_job_plan
+    from internet_radar.scheduler.runner import build_scheduler
+
+    scheduler = build_scheduler(job_runner=lambda job_name: None)
+    jobs = scheduler.get_jobs()
+    by_id = {job.id: job for job in jobs}
+
+    assert len(jobs) == len(build_job_plan().jobs)
+    assert "interval" in str(by_id["github_trending_check"].trigger)
+    assert "cron" in str(by_id["daily_briefing_generate"].trigger)
+    assert "weekly_trend_report" in by_id
+
+
+def test_scheduler_runner_named_job_delegates_to_collector():
+    from internet_radar.scheduler.runner import run_named_job
+
+    calls: list[str] = []
+
+    def collect_once() -> int:
+        calls.append("collected")
+        return 14
+
+    assert run_named_job("github_trending_check", collector=collect_once) == 14
+    assert calls == ["collected"]
