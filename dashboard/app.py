@@ -18,7 +18,7 @@ def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
         [
             {
                 "score": signal.score,
-                "domain_score": signal.metadata.get("research_score", signal.metadata.get("funding_score", "")),
+                "domain_score": _domain_score(signal),
                 "relevance": signal.metadata.get("relevance_score", ""),
                 "topic": signal.topic,
                 "title": signal.title,
@@ -29,6 +29,20 @@ def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
             for signal in signals
         ]
     )
+
+
+def _domain_score(signal: SignalRecord) -> object:
+    for key in (
+        "research_score",
+        "funding_score",
+        "hackathon_score",
+        "internship_score",
+        "startup_gap_score",
+        "trend_score",
+    ):
+        if key in signal.metadata:
+            return signal.metadata[key]
+    return ""
 
 
 def _gaps_to_frame(gaps: list[object]) -> pd.DataFrame:

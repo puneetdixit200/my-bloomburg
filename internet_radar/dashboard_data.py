@@ -14,7 +14,11 @@ from internet_radar.brain.skill_recommender import recommend_skills
 from internet_radar.brain.summarizer import summarize_signals
 from internet_radar.brain.trend_predictor import predict_trends
 from internet_radar.scoring.funding_scorer import FundingScorer
+from internet_radar.scoring.hackathon_scorer import HackathonScorer
+from internet_radar.scoring.internship_scorer import InternshipScorer
 from internet_radar.scoring.research_signal_scorer import ResearchSignalScorer
+from internet_radar.scoring.startup_gap_scorer import StartupGapScorer
+from internet_radar.scoring.trend_scorer import TrendScorer
 from internet_radar.search.radar_search import analyze_query
 from internet_radar.signals.academic_signal import build_academic_signals
 from internet_radar.signals.crowd_predictor import predict_crowd
@@ -51,13 +55,13 @@ def build_dashboard_payload(
     profile: UserProfile | None = None,
 ) -> dict[str, dict[str, Any]]:
     by_category: dict[str, list[SignalRecord]] = defaultdict(list)
+    profile = profile or UserProfile()
     enrich_signals_with_sentiment(signals)
-    enrich_domain_scores(signals)
+    enrich_domain_scores(signals, profile)
     for signal in sorted(signals, key=lambda item: item.score, reverse=True):
         by_category[signal.category].append(signal)
 
     all_signals = sorted(signals, key=lambda item: item.score, reverse=True)
-    profile = profile or UserProfile()
     router = LLMRouter()
     personalized_signals = rank_for_profile(all_signals, profile, limit=10)
     alerts = build_alerts(all_signals, profile)
@@ -134,9 +138,15 @@ def build_dashboard_payload(
     return payload
 
 
-def enrich_domain_scores(signals: list[SignalRecord]) -> None:
+def enrich_domain_scores(signals: list[SignalRecord], profile: UserProfile | None = None) -> None:
+    profile = profile or UserProfile()
+    profile_data = profile.model_dump()
     research_scorer = ResearchSignalScorer()
     funding_scorer = FundingScorer()
+    hackathon_scorer = HackathonScorer()
+    internship_scorer = InternshipScorer()
+    startup_gap_scorer = StartupGapScorer()
+    trend_scorer = TrendScorer()
     for signal in signals:
         if signal.category == "research":
             result = research_scorer.score({"topic": signal.topic, **signal.metadata})
@@ -149,3 +159,41 @@ def enrich_domain_scores(signals: list[SignalRecord]) -> None:
             signal.metadata["funding_score"] = result.score
             signal.metadata["funding_components"] = result.components
             signal.metadata["market_validation"] = result.market_validation
+        elif signal.category == "hackathons":
+            result = hackathon_scorer.score({"theme": signal.topic, "title": signal.title, **signal.metadata}, profile_data)
+            signal.metadata["hackathon_score"] = result.score
+            signal.metadata["hackathon_components"] = result.components
+            signal.metadata["hackathon_recommendation"] = result.recommendation
+        elif signal.category == "jobs":
+            result = internship_scorer.score(
+                {"description": f"{signal.topic} {signal.title} {signal.summary}", **signal.metadata},
+                profile_data,
+            )
+            signal.metadata["internship_score"] = result.score
+            signal.metadata["internship_components"] = result.components
+            signal.metadata["internship_recommendation"] = result.recommendation
+        elif signal.category in {"social", "news", "app_stores"}:
+            result = startup_gap_scorer.score(
+                {
+                    "complaint_count": signal.metadata.get("complaint_count", 10 if signal.metadata.get("frustration_score", 0) >= 45 else 0),
+                    "market_score": signal.metadata.get("market_score", 0.5),
+                    "competition_score": signal.metadata.get("competition_score", 0.5),
+                    "feasibility_score": signal.metadata.get("feasibility_score", 0.5),
+                    "trend_phase": signal.metadata.get("trend_phase", "EMERGING"),
+                }
+            )
+            signal.metadata["startup_gap_score"] = result.score
+            signal.metadata["startup_gap_components"] = result.components
+            signal.metadata["startup_gap_recommendation"] = result.recommendation
+        if signal.category in {"code", "search", "news"} or {"confirming_sources", "phase", "funding_detected"} & signal.metadata.keys():
+            result = trend_scorer.score(
+                {
+                    "velocity_score": signal.metadata.get("velocity_score", signal.velocity),
+                    "confirming_sources": signal.metadata.get("confirming_sources", 1),
+                    "phase": signal.metadata.get("phase", "EMERGING"),
+                    "funding_detected": signal.metadata.get("funding_detected", False),
+                }
+            )
+            signal.metadata["trend_score"] = result.score
+            signal.metadata["trend_components"] = result.components
+            signal.metadata["trend_phase"] = result.phase
