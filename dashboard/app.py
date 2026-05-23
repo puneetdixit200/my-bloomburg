@@ -99,6 +99,10 @@ def _source_agreements_to_frame(agreements: list[object]) -> pd.DataFrame:
     )
 
 
+def _objects_to_frame(items: list[object]) -> pd.DataFrame:
+    return pd.DataFrame([getattr(item, "__dict__", {}) for item in items])
+
+
 def render_page(page_key: str, page_payload: dict[str, object]) -> None:
     st.subheader(str(page_payload["title"]))
     st.caption(str(page_payload["description"]))
@@ -140,6 +144,28 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
         if agreements:
             st.subheader("Source Agreement")
             st.dataframe(_source_agreements_to_frame(agreements), width="stretch", hide_index=True)
+        correlations = list(page_payload.get("trend_correlations", []))
+        if correlations:
+            st.subheader("Trend Correlations")
+            st.dataframe(_objects_to_frame(correlations), width="stretch", hide_index=True)
+
+    if page_key == "hackathon_radar":
+        predictions = list(page_payload.get("crowd_predictions", []))
+        if predictions:
+            st.subheader("Crowd Prediction")
+            st.dataframe(_objects_to_frame(predictions), width="stretch", hide_index=True)
+
+    if page_key == "research_radar":
+        academic_signals = list(page_payload.get("academic_signals", []))
+        if academic_signals:
+            st.subheader("Academic Momentum")
+            st.dataframe(_objects_to_frame(academic_signals), width="stretch", hide_index=True)
+
+    if page_key == "funding_radar":
+        funding_signals = list(page_payload.get("funding_signals", []))
+        if funding_signals:
+            st.subheader("Funding Validation")
+            st.dataframe(_objects_to_frame(funding_signals), width="stretch", hide_index=True)
 
     if page_key in {"startup_gaps", "app_store_pain"}:
         gap_key = "pain_clusters" if page_key == "app_store_pain" else "gap_clusters"

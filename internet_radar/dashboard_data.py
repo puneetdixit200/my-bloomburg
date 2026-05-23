@@ -10,9 +10,13 @@ from internet_radar.brain.skill_recommender import recommend_skills
 from internet_radar.scoring.funding_scorer import FundingScorer
 from internet_radar.scoring.research_signal_scorer import ResearchSignalScorer
 from internet_radar.search.radar_search import analyze_query
+from internet_radar.signals.academic_signal import build_academic_signals
+from internet_radar.signals.crowd_predictor import predict_crowd
 from internet_radar.signals.cross_source_multiplier import build_source_agreements
+from internet_radar.signals.funding_signal import build_funding_signals
 from internet_radar.signals.gap_finder import find_startup_gaps
 from internet_radar.signals.sentiment_pipeline import enrich_signals_with_sentiment, summarize_sentiment
+from internet_radar.signals.trend_correlator import correlate_trends
 from internet_radar.storage.models import PageDefinition, SignalRecord, UserProfile
 from internet_radar.storage.vector_store import build_semantic_clusters
 
@@ -58,6 +62,14 @@ def build_dashboard_payload(
     gap_clusters = find_startup_gaps(all_signals)
     semantic_clusters = build_semantic_clusters(all_signals)
     source_agreements = build_source_agreements(all_signals)
+    trend_correlations = correlate_trends(all_signals)
+    academic_signals = build_academic_signals(all_signals)
+    funding_signals = build_funding_signals(all_signals)
+    crowd_predictions = [
+        predict_crowd({"title": signal.title, **signal.metadata})
+        for signal in all_signals
+        if signal.category == "hackathons"
+    ]
     daily_briefing = write_daily_briefing(all_signals, active_sources=active_sources, llm_status=llm_status)
     skill_recommendations = recommend_skills(all_signals, profile=profile)
     payload: dict[str, dict[str, Any]] = {}
@@ -87,6 +99,10 @@ def build_dashboard_payload(
             "pain_clusters": gap_clusters,
             "semantic_clusters": semantic_clusters,
             "source_agreements": source_agreements,
+            "trend_correlations": trend_correlations,
+            "academic_signals": academic_signals,
+            "funding_signals": funding_signals,
+            "crowd_predictions": crowd_predictions,
             "skill_recommendations": skill_recommendations,
             "sentiment_summary": summarize_sentiment(page_signals),
             "profile": profile.model_dump(),
