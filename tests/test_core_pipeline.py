@@ -489,6 +489,128 @@ def test_default_live_collectors_include_no_key_third_wave():
     } <= names
 
 
+def test_fourth_wave_no_key_collectors_parse_representative_payloads():
+    from internet_radar.collectors.live import (
+        parse_bluesky_posts,
+        parse_crates_results,
+        parse_hashnode_posts,
+        parse_leetcode_contests,
+        parse_mastodon_statuses,
+        parse_mlh_events_html,
+        parse_playstore_search_html,
+        parse_rss_entries,
+        parse_wayback_available,
+        parse_yahoo_quote,
+    )
+
+    assert parse_crates_results(
+        {"crates": [{"id": "tokio", "name": "tokio", "description": "Async runtime", "downloads": 50000000, "recent_downloads": 1200000}]}
+    )[0].source == "crates.io"
+
+    assert parse_bluesky_posts(
+        {"posts": [{"uri": "at://did/post/1", "record": {"text": "Browser agents are moving fast"}, "author": {"handle": "builder.dev"}, "likeCount": 10, "replyCount": 2, "repostCount": 3}]}
+    )[0].category == "social"
+
+    assert parse_mastodon_statuses(
+        [{"id": "1", "content": "<p>Local LLM browser automation trend</p>", "url": "https://mastodon.example/@dev/1", "favourites_count": 8}]
+    )[0].source == "Mastodon"
+
+    assert parse_rss_entries(
+        """
+        <rss>
+          <channel>
+            <title>Feed title</title>
+            <link>https://example.com/feed</link>
+            <description>Feed description</description>
+            <item>
+              <title><![CDATA[Agentic browser automation weekly]]></title>
+              <link>https://example.com/agentic-browser-automation</link>
+              <description><![CDATA[<p>Local LLM workflows are accelerating.</p>]]></description>
+            </item>
+          </channel>
+        </rss>
+        """,
+        source_name="OpenAI Blog",
+    )[0].source == "OpenAI Blog"
+
+    assert parse_hashnode_posts(
+        {
+            "data": {
+                "storiesFeed": {
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "hash-1",
+                                "title": "Building AI agents",
+                                "brief": "Practical notes.",
+                                "url": "https://hashnode.example/agents",
+                                "reactionCount": 12,
+                                "responseCount": 3,
+                                "tags": [{"name": "AI"}],
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    )[0].source == "Hashnode"
+
+    assert parse_mlh_events_html('<a href="/events/local-ai-hack" class="event event-link"><h3>Local AI Hackathon</h3></a>')[
+        0
+    ].category == "hackathons"
+
+    assert parse_leetcode_contests({"data": {"allContests": [{"title": "Weekly Contest 500", "titleSlug": "weekly-contest-500", "startTime": 1770000000, "duration": 5400}]}})[
+        0
+    ].source == "LeetCode Contests"
+
+    assert parse_yahoo_quote(
+        {"quoteResponse": {"result": [{"symbol": "NVDA", "longName": "NVIDIA Corporation", "regularMarketPrice": 110.5, "regularMarketChangePercent": 2.7}]}}
+    )[0].category == "finance"
+
+    assert parse_wayback_available(
+        {"archived_snapshots": {"closest": {"available": True, "status": "200", "timestamp": "20260523000000", "url": "https://web.archive.org/snapshot"}}},
+        "https://openai.com",
+    )[0].source == "Wayback Machine"
+
+    assert parse_playstore_search_html('<a href="/store/apps/details?id=com.example.agent">AI Agent Reviews</a>')[0].source == "Google Play"
+
+
+def test_default_live_collectors_include_no_key_fourth_wave():
+    from internet_radar.collectors.live import default_collectors
+
+    names = {collector.name for collector in default_collectors(use_live_network=True)}
+
+    assert {
+        "crates.io",
+        "Bluesky",
+        "Mastodon",
+        "Tech RSS",
+        "Hashnode",
+        "MLH",
+        "LeetCode Contests",
+        "Yahoo Finance",
+        "Wayback Machine",
+        "Google Play",
+    } <= names
+
+
+def test_source_specific_fallback_preserves_real_collector_identity(monkeypatch):
+    from internet_radar.collectors.live import GooglePlayCollector
+
+    collector = GooglePlayCollector()
+
+    def fail_get_text(*args, **kwargs):
+        raise RuntimeError("network unavailable")
+
+    monkeypatch.setattr(collector, "get_text", fail_get_text)
+
+    signal = collector.collect()[0]
+
+    assert signal.source == "Google Play"
+    assert signal.category == "app_stores"
+    assert signal.metadata["fallback"] is True
+
+
 def test_google_trends_collector_uses_source_specific_fallback(monkeypatch):
     from internet_radar.collectors.live import GoogleTrendsCollector
 

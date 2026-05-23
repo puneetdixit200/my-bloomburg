@@ -7,9 +7,11 @@ import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import requests
+import yaml
 
 from internet_radar.collectors.base import HTTPCollector
 from internet_radar.special.radar import build_special_signals
@@ -30,6 +32,13 @@ def infer_topic(title: str) -> str:
 def _as_int(value: Any, default: int = 0) -> int:
     try:
         return int(float(str(value).replace(",", "")))
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(str(value).replace(",", ""))
     except (TypeError, ValueError):
         return default
 
@@ -183,24 +192,251 @@ def parse_reddit_children(children: list[dict[str, Any]]) -> list[SignalRecord]:
     return records
 
 
-def parse_rss_entries(text: str) -> list[SignalRecord]:
+def parse_rss_entries(text: str, source_name: str = "Tech RSS") -> list[SignalRecord]:
     titles = re.findall(r"<title><!\[CDATA\[(.*?)\]\]></title>|<title>(.*?)</title>", text, flags=re.I | re.S)
     links = re.findall(r"<link>(.*?)</link>", text, flags=re.I | re.S)
+    summaries = re.findall(
+        r"<description><!\[CDATA\[(.*?)\]\]></description>|<description>(.*?)</description>",
+        text,
+        flags=re.I | re.S,
+    )
     records: list[SignalRecord] = []
     for index, title_pair in enumerate(titles[1:8]):
         title = html.unescape(next((part for part in title_pair if part), "")).strip()
         if not title:
             continue
+        summary = _clean_html(next((part for part in summaries[index + 1] if part), "")) if index + 1 < len(summaries) else ""
         records.append(
             SignalRecord(
-                id=f"rss:{index}:{title}",
+                id=f"rss:{source_name}:{index}:{title}",
                 topic=infer_topic(title),
                 title=title,
-                source="Tech RSS",
+                source=source_name,
                 category="news",
                 url=links[index + 1] if index + 1 < len(links) else "",
                 score=58,
                 velocity=1,
+                summary=summary[:280],
+            )
+        )
+    return records
+
+
+def parse_crates_results(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in _payload_list(payload, "crates"):
+        name = str(item.get("name") or "Rust crate")
+        downloads = _as_int(item.get("downloads"))
+        recent = _as_int(item.get("recent_downloads"))
+        records.append(
+            SignalRecord(
+                id=f"crates:{item.get('id', name)}",
+                topic=infer_topic(name),
+                title=f"{name} Rust crate velocity",
+                source="crates.io",
+                category="code",
+                url=f"https://crates.io/crates/{name}",
+                score=min(58 + recent // 10_000 + downloads // 1_000_000, 100),
+                velocity=max(recent, downloads, 1),
+                summary=str(item.get("description") or "")[:280],
+                metadata={"downloads": downloads, "recent_downloads": recent},
+            )
+        )
+    return records
+
+
+def parse_bluesky_posts(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in _payload_list(payload, "posts"):
+        record = item.get("record") or {}
+        author = item.get("author") or {}
+        text = str(record.get("text") or item.get("text") or "Bluesky post")
+        likes = _as_int(item.get("likeCount"))
+        replies = _as_int(item.get("replyCount"))
+        reposts = _as_int(item.get("repostCount"))
+        records.append(
+            SignalRecord(
+                id=f"bluesky:{item.get('uri', text)}",
+                topic=infer_topic(text),
+                title=text[:120],
+                source="Bluesky",
+                category="social",
+                url=str(item.get("uri") or ""),
+                score=min(50 + likes + replies * 2 + reposts, 100),
+                velocity=likes + replies + reposts,
+                summary=text[:280],
+                metadata={"author": author.get("handle"), "likes": likes, "replies": replies, "reposts": reposts},
+            )
+        )
+    return records
+
+
+def parse_mastodon_statuses(items: list[dict[str, Any]]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in items:
+        content = _clean_html(str(item.get("content") or "Mastodon status"))
+        account = item.get("account") or {}
+        reblogs = _as_int(item.get("reblogs_count"))
+        favourites = _as_int(item.get("favourites_count"))
+        replies = _as_int(item.get("replies_count"))
+        records.append(
+            SignalRecord(
+                id=f"mastodon:{item.get('id', content)}",
+                topic=infer_topic(content),
+                title=content[:120] or "Mastodon trend",
+                source="Mastodon",
+                category="social",
+                url=str(item.get("url") or ""),
+                score=min(48 + reblogs * 2 + favourites + replies * 2, 100),
+                velocity=reblogs + favourites + replies,
+                summary=content[:280],
+                metadata={"account": account.get("acct"), "reblogs": reblogs, "favourites": favourites, "replies": replies},
+            )
+        )
+    return records
+
+
+def parse_hashnode_posts(payload: dict[str, Any]) -> list[SignalRecord]:
+    candidates = (
+        (((payload.get("data") or {}).get("storiesFeed") or {}).get("edges") or [])
+        or (((payload.get("data") or {}).get("feed") or {}).get("edges") or [])
+    )
+    records: list[SignalRecord] = []
+    for edge in candidates:
+        node = edge.get("node", edge) if isinstance(edge, dict) else {}
+        if not isinstance(node, dict):
+            continue
+        title = str(node.get("title") or "Hashnode article")
+        reactions = _as_int(node.get("reactionCount"))
+        responses = _as_int(node.get("responseCount"))
+        tags = [str(tag.get("name", "")) for tag in node.get("tags") or [] if isinstance(tag, dict)]
+        records.append(
+            SignalRecord(
+                id=f"hashnode:{node.get('id', title)}",
+                topic=infer_topic(" ".join(tags) if tags else title),
+                title=title,
+                source="Hashnode",
+                category="news",
+                url=str(node.get("url") or ""),
+                score=min(55 + reactions + responses * 2, 100),
+                velocity=reactions + responses,
+                summary=str(node.get("brief") or "")[:280],
+                metadata={"tags": [tag for tag in tags if tag]},
+            )
+        )
+    return records
+
+
+def parse_mlh_events_html(text: str) -> list[SignalRecord]:
+    cards = re.findall(r'<a[^>]+href="([^"]+)"[^>]*class="[^"]*event[^"]*"[^>]*>(.*?)</a>', text, flags=re.I | re.S)
+    records: list[SignalRecord] = []
+    for index, (url, card_html) in enumerate(cards[:10]):
+        title_match = re.search(r"<h[23][^>]*>(.*?)</h[23]>", card_html, flags=re.I | re.S)
+        title = _clean_html(title_match.group(1) if title_match else card_html)
+        if not title:
+            continue
+        records.append(
+            SignalRecord(
+                id=f"mlh:{index}:{title}",
+                topic=infer_topic(title),
+                title=title,
+                source="MLH",
+                category="hackathons",
+                url=url if url.startswith("http") else f"https://mlh.io{url}",
+                score=65,
+                velocity=1,
+            )
+        )
+    return records
+
+
+def parse_leetcode_contests(payload: dict[str, Any]) -> list[SignalRecord]:
+    contests = (((payload.get("data") or {}).get("allContests")) or _payload_list(payload, "contests") or [])
+    records: list[SignalRecord] = []
+    for item in contests[:10]:
+        title = str(item.get("title") or "LeetCode contest")
+        start = _as_int(item.get("startTime") or item.get("originStartTime"))
+        records.append(
+            SignalRecord(
+                id=f"leetcode:{item.get('titleSlug', title)}",
+                topic=infer_topic(title),
+                title=title,
+                source="LeetCode Contests",
+                category="hackathons",
+                url=f"https://leetcode.com/contest/{item.get('titleSlug', '')}",
+                score=64,
+                velocity=max(start, 1),
+                metadata={"start_time": start, "duration": item.get("duration")},
+            )
+        )
+    return records
+
+
+def parse_yahoo_quote(payload: dict[str, Any]) -> list[SignalRecord]:
+    results = (((payload.get("quoteResponse") or {}).get("result")) or [])
+    records: list[SignalRecord] = []
+    for item in results:
+        symbol = str(item.get("symbol") or "stock")
+        change = _as_float(item.get("regularMarketChangePercent"))
+        price = _as_float(item.get("regularMarketPrice"))
+        records.append(
+            SignalRecord(
+                id=f"yahoo-finance:{symbol}",
+                topic=infer_topic(str(item.get("longName") or symbol)),
+                title=f"{symbol} market momentum",
+                source="Yahoo Finance",
+                category="finance",
+                url=f"https://finance.yahoo.com/quote/{symbol}",
+                score=min(60 + int(abs(change) * 3), 100),
+                velocity=change,
+                metadata={"price": price, "change_percent": change},
+            )
+        )
+    return records
+
+
+def parse_wayback_available(payload: dict[str, Any], target_url: str) -> list[SignalRecord]:
+    snapshot = ((payload.get("archived_snapshots") or {}).get("closest") or {})
+    if not snapshot:
+        return []
+    status = str(snapshot.get("status") or "")
+    timestamp = str(snapshot.get("timestamp") or "")
+    return [
+        SignalRecord(
+            id=f"wayback:{target_url}:{timestamp}",
+            topic=infer_topic(target_url),
+            title=f"{target_url} has recent Wayback coverage",
+            source="Wayback Machine",
+            category="search",
+            url=str(snapshot.get("url") or ""),
+            score=65 if status == "200" else 55,
+            velocity=1,
+            metadata={"status": status, "timestamp": timestamp, "available": bool(snapshot.get("available", True))},
+        )
+    ]
+
+
+def parse_playstore_search_html(text: str) -> list[SignalRecord]:
+    matches = re.findall(r'href="(/store/apps/details\?id=([^"&]+)[^"]*)".{0,500}?>([^<>]{3,120})<', text, flags=re.I | re.S)
+    records: list[SignalRecord] = []
+    seen: set[str] = set()
+    for index, (path, app_id, title_html) in enumerate(matches[:10]):
+        if app_id in seen:
+            continue
+        seen.add(app_id)
+        title = _clean_html(title_html)
+        if not title:
+            continue
+        records.append(
+            SignalRecord(
+                id=f"google-play:{app_id}",
+                topic=infer_topic(title),
+                title=title,
+                source="Google Play",
+                category="app_stores",
+                url=f"https://play.google.com{html.unescape(path)}",
+                score=58,
+                velocity=max(1, 10 - index),
             )
         )
     return records
@@ -943,6 +1179,147 @@ class PackageCollector(HTTPCollector):
         return signals
 
 
+class CratesIOCollector(HTTPCollector):
+    def __init__(self, query: str = "llm") -> None:
+        super().__init__(name="crates.io", category="code")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://crates.io/api/v1/crates", q=self.query, sort="downloads", per_page=10)
+            records = parse_crates_results(data if isinstance(data, dict) else {})
+            return records or source_fallback("crates.io", "code", "rust package velocity", 58)
+        except Exception:
+            return source_fallback("crates.io", "code", "rust package velocity", 58)
+
+
+class BlueskyCollector(HTTPCollector):
+    def __init__(self, query: str = "browser agents") -> None:
+        super().__init__(name="Bluesky", category="social")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts", q=self.query, limit=20)
+            records = parse_bluesky_posts(data if isinstance(data, dict) else {})
+            return records or source_fallback("Bluesky", "social", "bluesky early adopter signals", 58)
+        except Exception:
+            return source_fallback("Bluesky", "social", "bluesky early adopter signals", 58)
+
+
+class MastodonCollector(HTTPCollector):
+    def __init__(self, instance: str = "mastodon.social") -> None:
+        super().__init__(name="Mastodon", category="social")
+        self.instance = instance
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json(f"https://{self.instance}/api/v1/trends/statuses")
+            records = parse_mastodon_statuses(list(data) if isinstance(data, list) else [])
+            return records or source_fallback("Mastodon", "social", "mastodon developer signals", 58)
+        except Exception:
+            return source_fallback("Mastodon", "social", "mastodon developer signals", 58)
+
+
+class RSSCollector(HTTPCollector):
+    def __init__(self, config_path: str | Path = "config/rss_feeds.yaml") -> None:
+        super().__init__(name="Tech RSS", category="news")
+        self.config_path = Path(config_path)
+
+    def collect(self) -> list[SignalRecord]:
+        records: list[SignalRecord] = []
+        for feed in self._feeds()[:5]:
+            try:
+                text = self.get_text(str(feed["url"]))
+                records.extend(parse_rss_entries(text, source_name=str(feed["name"])))
+            except Exception:
+                continue
+        return records or source_fallback("Tech RSS", "news", "rss technology news", 58)
+
+    def _feeds(self) -> list[dict[str, str]]:
+        if not self.config_path.exists():
+            return [{"name": "Hacker News", "url": "https://news.ycombinator.com/rss"}]
+        data = yaml.safe_load(self.config_path.read_text(encoding="utf-8")) or {}
+        feeds = data.get("feeds", []) if isinstance(data, dict) else []
+        return [
+            {"name": str(feed.get("name") or "Tech RSS"), "url": str(feed.get("url") or "")}
+            for feed in feeds
+            if isinstance(feed, dict) and feed.get("url")
+        ]
+
+
+class HashnodeCollector(HTTPCollector):
+    query = """
+    query {
+      storiesFeed(type: FEATURED, first: 20) {
+        edges {
+          node {
+            id
+            title
+            brief
+            url
+            reactionCount
+            responseCount
+            tags { name }
+          }
+        }
+      }
+    }
+    """
+
+    def __init__(self, http_post: HttpPost = requests.post) -> None:
+        super().__init__(name="Hashnode", category="news")
+        self.http_post = http_post
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            response = self.http_post("https://gql.hashnode.com", json={"query": self.query}, timeout=self.timeout)
+            response.raise_for_status()
+            records = parse_hashnode_posts(response.json())
+            return records or source_fallback("Hashnode", "news", "hashnode developer articles", 55)
+        except Exception:
+            return source_fallback("Hashnode", "news", "hashnode developer articles", 55)
+
+
+class MLHCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="MLH", category="hackathons")
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://mlh.io/seasons/2026/events")
+            records = parse_mlh_events_html(text)
+            return records or source_fallback("MLH", "hackathons", "mlh hackathons", 65)
+        except Exception:
+            return source_fallback("MLH", "hackathons", "mlh hackathons", 65)
+
+
+class LeetCodeContestsCollector(HTTPCollector):
+    query = """
+    query {
+      allContests {
+        title
+        titleSlug
+        startTime
+        duration
+      }
+    }
+    """
+
+    def __init__(self, http_post: HttpPost = requests.post) -> None:
+        super().__init__(name="LeetCode Contests", category="hackathons")
+        self.http_post = http_post
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            response = self.http_post("https://leetcode.com/graphql", json={"query": self.query}, timeout=self.timeout)
+            response.raise_for_status()
+            records = parse_leetcode_contests(response.json())
+            return records or source_fallback("LeetCode Contests", "hackathons", "leetcode contests", 60)
+        except Exception:
+            return source_fallback("LeetCode Contests", "hackathons", "leetcode contests", 60)
+
+
 class LobstersCollector(HTTPCollector):
     def __init__(self) -> None:
         super().__init__(name="Lobsters", category="news")
@@ -1033,6 +1410,20 @@ class CoinGeckoCollector(HTTPCollector):
             return sample_signals("finance")
 
 
+class YahooFinanceCollector(HTTPCollector):
+    def __init__(self, symbols: str = "NVDA,MSFT,AMD") -> None:
+        super().__init__(name="Yahoo Finance", category="finance")
+        self.symbols = symbols
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://query1.finance.yahoo.com/v7/finance/quote", symbols=self.symbols)
+            records = parse_yahoo_quote(data if isinstance(data, dict) else {})
+            return records or source_fallback("Yahoo Finance", "finance", "stock trends", 60)
+        except Exception:
+            return source_fallback("Yahoo Finance", "finance", "stock trends", 60)
+
+
 class ITunesCollector(HTTPCollector):
     def __init__(self, term: str = "AI assistant") -> None:
         super().__init__(name="iTunes App Store", category="app_stores")
@@ -1044,6 +1435,20 @@ class ITunesCollector(HTTPCollector):
             return parse_itunes_results(data if isinstance(data, dict) else [])
         except Exception:
             return sample_signals("app_stores")
+
+
+class GooglePlayCollector(HTTPCollector):
+    def __init__(self, term: str = "AI assistant") -> None:
+        super().__init__(name="Google Play", category="app_stores")
+        self.term = term
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://play.google.com/store/search", q=self.term, c="apps", hl="en", gl="US")
+            records = parse_playstore_search_html(text)
+            return records or source_fallback("Google Play", "app_stores", "google play reviews", 58)
+        except Exception:
+            return source_fallback("Google Play", "app_stores", "google play reviews", 58)
 
 
 class SteamCollector(HTTPCollector):
@@ -1084,6 +1489,20 @@ class GoogleTrendsCollector(HTTPCollector):
             return records or google_trends_fallback()
         except Exception:
             return google_trends_fallback()
+
+
+class WaybackCollector(HTTPCollector):
+    def __init__(self, target_url: str = "https://openai.com") -> None:
+        super().__init__(name="Wayback Machine", category="search")
+        self.target_url = target_url
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://archive.org/wayback/available", url=self.target_url)
+            records = parse_wayback_available(data if isinstance(data, dict) else {}, self.target_url)
+            return records or source_fallback("Wayback Machine", "search", "web archive changes", 55)
+        except Exception:
+            return source_fallback("Wayback Machine", "search", "web archive changes", 55)
 
 
 class YCCompaniesCollector(HTTPCollector):
@@ -1340,24 +1759,34 @@ def default_collectors(use_live_network: bool = True) -> list[object]:
         GitHubSearchCollector(),
         HackerNewsCollector(),
         RedditJSONCollector(),
+        BlueskyCollector(),
+        MastodonCollector(),
         DevToCollector(),
+        RSSCollector(),
+        HashnodeCollector(),
         LobstersCollector(),
         RemoteOKCollector(),
         TheMuseCollector(),
         ArbeitnowCollector(),
         CodeforcesCollector(),
+        MLHCollector(),
+        LeetCodeContestsCollector(),
         ArxivCollector(),
         OpenAlexCollector(),
         WikipediaPageviewsCollector(),
         CoinGeckoCollector(),
+        YahooFinanceCollector(),
         ITunesCollector(),
+        GooglePlayCollector(),
         SteamCollector(),
         DuckDuckGoCollector(),
+        WaybackCollector(),
         GoogleTrendsCollector(),
         YCCompaniesCollector(),
         SECEdgarCollector(),
         PapersWithCodeCollector(),
         PackageCollector(),
+        CratesIOCollector(),
         *_keyed_collectors_from_env(),
         SpecialIntelligenceCollector(),
     ]
@@ -1387,6 +1816,22 @@ def google_trends_fallback() -> list[SignalRecord]:
             score=68,
             velocity=50_000,
             metadata={"approx_traffic": 50_000},
+        )
+    ]
+
+
+def source_fallback(name: str, category: str, topic: str, score: int) -> list[SignalRecord]:
+    return [
+        SignalRecord(
+            id=f"source-fallback:{name.lower().replace(' ', '-').replace('.', '')}",
+            topic=topic,
+            title=f"{name} fallback signal",
+            source=name,
+            category=category,  # type: ignore[arg-type]
+            score=score,
+            velocity=max(score - 50, 1),
+            summary=f"Deterministic fallback for {name} live collection.",
+            metadata={"fallback": True},
         )
     ]
 

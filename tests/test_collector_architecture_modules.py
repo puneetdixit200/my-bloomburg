@@ -94,58 +94,98 @@ def test_architecture_collector_files_exist_and_export_collector_class():
 
 def test_architecture_collector_wrappers_reuse_live_or_safe_fallbacks():
     from internet_radar.collectors.app_stores.appstore_collector import Collector as AppStoreCollector
+    from internet_radar.collectors.app_stores.playstore_collector import Collector as GooglePlayCollector
+    from internet_radar.collectors.code.crates_collector import Collector as CratesCollector
     from internet_radar.collectors.code.github_collector import Collector as GitHubCollector
     from internet_radar.collectors.code.libraries_io_collector import Collector as LibrariesIOCollector
     from internet_radar.collectors.finance.crunchbase_collector import Collector as CrunchbaseCollector
+    from internet_radar.collectors.finance.yfinance_collector import Collector as YahooFinanceCollector
+    from internet_radar.collectors.hackathons.leetcode_collector import Collector as LeetCodeCollector
+    from internet_radar.collectors.hackathons.mlh_scraper import Collector as MLHCollector
     from internet_radar.collectors.jobs.adzuna_collector import Collector as AdzunaCollector
+    from internet_radar.collectors.news.hashnode_collector import Collector as HashnodeCollector
     from internet_radar.collectors.news.producthunt_collector import Collector as ProductHuntCollector
+    from internet_radar.collectors.news.rss_collector import Collector as RSSCollector
     from internet_radar.collectors.search.google_trends_collector import Collector as GoogleTrendsCollector
     from internet_radar.collectors.research.arxiv_collector import Collector as ArxivCollector
     from internet_radar.collectors.research.semantic_scholar import Collector as SemanticScholarCollector
     from internet_radar.collectors.search.brave_search_collector import Collector as BraveSearchCollector
     from internet_radar.collectors.search.tavily_collector import Collector as TavilyCollector
+    from internet_radar.collectors.search.wayback_collector import Collector as WaybackCollector
+    from internet_radar.collectors.social.bluesky_collector import Collector as BlueskyCollector
     from internet_radar.collectors.social.hackernews_search import Collector as HNSearchCollector
+    from internet_radar.collectors.social.mastodon_collector import Collector as MastodonCollector
 
     samples = [
         GitHubCollector(use_live_network=False).collect()[0],
+        CratesCollector(use_live_network=False).collect()[0],
         LibrariesIOCollector(use_live_network=False).collect()[0],
         HNSearchCollector(use_live_network=False).collect()[0],
+        BlueskyCollector(use_live_network=False).collect()[0],
+        MastodonCollector(use_live_network=False).collect()[0],
         ProductHuntCollector(use_live_network=False).collect()[0],
+        RSSCollector(use_live_network=False).collect()[0],
+        HashnodeCollector(use_live_network=False).collect()[0],
         AdzunaCollector(use_live_network=False).collect()[0],
+        MLHCollector(use_live_network=False).collect()[0],
+        LeetCodeCollector(use_live_network=False).collect()[0],
         ArxivCollector(use_live_network=False).collect()[0],
         SemanticScholarCollector(use_live_network=False).collect()[0],
         CrunchbaseCollector(use_live_network=False).collect()[0],
+        YahooFinanceCollector(use_live_network=False).collect()[0],
         BraveSearchCollector(use_live_network=False).collect()[0],
         TavilyCollector(use_live_network=False).collect()[0],
+        WaybackCollector(use_live_network=False).collect()[0],
         GoogleTrendsCollector(use_live_network=False).collect()[0],
         AppStoreCollector(use_live_network=False).collect()[0],
+        GooglePlayCollector(use_live_network=False).collect()[0],
     ]
 
     assert [sample.category for sample in samples] == [
         "code",
         "code",
+        "code",
+        "social",
+        "social",
         "social",
         "news",
+        "news",
+        "news",
         "jobs",
+        "hackathons",
+        "hackathons",
         "research",
         "research",
+        "finance",
         "finance",
         "search",
         "search",
         "search",
+        "search",
+        "app_stores",
         "app_stores",
     ]
     assert {sample.source for sample in samples} >= {
         "GitHub Search",
+        "crates.io",
         "Libraries.io",
         "Hacker News",
+        "Bluesky",
+        "Mastodon",
         "Product Hunt",
+        "Tech RSS",
+        "Hashnode",
         "Adzuna",
+        "MLH",
+        "LeetCode Contests",
         "arXiv",
         "Semantic Scholar",
         "Crunchbase",
+        "Yahoo Finance",
         "Brave Search",
         "Tavily",
+        "Wayback Machine",
         "Google Trends",
         "iTunes App Store",
+        "Google Play",
     }
