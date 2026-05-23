@@ -362,3 +362,67 @@ def test_default_live_collectors_include_no_key_second_wave():
         "Steam",
         "Special Intelligence",
     } <= names
+
+
+def test_third_wave_no_key_collectors_parse_representative_payloads():
+    from internet_radar.collectors.live import (
+        parse_duckduckgo_results,
+        parse_paperswithcode_results,
+        parse_sec_submissions,
+        parse_yc_companies,
+    )
+
+    assert parse_yc_companies(
+        [
+            {
+                "id": 1,
+                "name": "AgentOps",
+                "one_liner": "Observability for AI browser agents",
+                "batch": "W26",
+                "industries": ["Developer Tools", "AI"],
+                "url": "https://www.ycombinator.com/companies/agentops",
+            }
+        ]
+    )[0].source == "YC Companies"
+
+    assert parse_sec_submissions(
+        {
+            "name": "NVIDIA CORP",
+            "cik": "0001045810",
+            "filings": {"recent": {"form": ["10-K", "8-K"], "accessionNumber": ["0001", "0002"], "filingDate": ["2026-03-01", "2026-05-01"]}},
+        }
+    )[0].metadata["form"] == "10-K"
+
+    assert parse_duckduckgo_results(
+        """
+        <a class="result__a" href="https://example.com/agents">Browser agents trend report</a>
+        <a class="result__snippet">Teams complain debugging browser automation is painful.</a>
+        """
+    )[0].source == "DuckDuckGo"
+
+    assert parse_paperswithcode_results(
+        {
+            "results": [
+                {
+                    "id": "pwc-1",
+                    "title": "Agentic Browser Automation",
+                    "abstract": "Code and benchmarks for local browser agents.",
+                    "url_abs": "https://paperswithcode.com/paper/agentic-browser-automation",
+                    "repositories": [{"stars": 321}],
+                }
+            ]
+        }
+    )[0].metadata["repo_stars"] == 321
+
+
+def test_default_live_collectors_include_no_key_third_wave():
+    from internet_radar.collectors.live import default_collectors
+
+    names = {collector.name for collector in default_collectors(use_live_network=True)}
+
+    assert {
+        "DuckDuckGo",
+        "YC Companies",
+        "SEC EDGAR",
+        "Papers With Code",
+    } <= names

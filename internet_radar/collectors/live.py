@@ -454,6 +454,117 @@ def parse_npm_package(package: str, payload: dict[str, Any]) -> list[SignalRecor
     ]
 
 
+def parse_yc_companies(payload: dict[str, Any] | list[dict[str, Any]]) -> list[SignalRecord]:
+    items = _payload_list(payload, "companies") or _payload_list(payload, "results") or _payload_list(payload, "data")
+    records: list[SignalRecord] = []
+    for item in items:
+        name = str(item.get("name") or item.get("company") or "YC company")
+        one_liner = str(item.get("one_liner") or item.get("description") or item.get("tagline") or "")
+        industries = [str(industry) for industry in item.get("industries") or item.get("tags") or []]
+        haystack = f"{name} {one_liner} {' '.join(industries)}".lower()
+        score = 76 if any(term in haystack for term in ["ai", "agent", "developer", "automation"]) else 64
+        records.append(
+            SignalRecord(
+                id=f"yc:{item.get('id', name)}",
+                topic=infer_topic(" ".join(industries) if industries else name),
+                title=f"{name} YC company signal",
+                source="YC Companies",
+                category="finance",
+                url=str(item.get("url") or item.get("website") or "https://www.ycombinator.com/companies"),
+                score=score,
+                velocity=score,
+                summary=one_liner[:280],
+                metadata={"batch": item.get("batch"), "industries": industries},
+            )
+        )
+    return records
+
+
+def parse_sec_submissions(payload: dict[str, Any] | list[dict[str, Any]]) -> list[SignalRecord]:
+    if not isinstance(payload, dict):
+        return []
+    company = str(payload.get("name") or payload.get("entityName") or "SEC company")
+    cik = str(payload.get("cik") or payload.get("cik_str") or "").zfill(10)
+    recent = ((payload.get("filings") or {}).get("recent") or {}) if isinstance(payload.get("filings"), dict) else {}
+    forms = list(recent.get("form") or [])
+    accessions = list(recent.get("accessionNumber") or [])
+    dates = list(recent.get("filingDate") or [])
+    records: list[SignalRecord] = []
+    for index, form in enumerate(forms[:6]):
+        form_name = str(form)
+        accession = str(accessions[index]) if index < len(accessions) else f"{company}:{index}"
+        filing_date = str(dates[index]) if index < len(dates) else ""
+        score = 78 if form_name in {"10-K", "10-Q", "8-K", "S-1"} else 62
+        records.append(
+            SignalRecord(
+                id=f"sec:{cik}:{accession}",
+                topic=infer_topic(f"{company} {form_name}"),
+                title=f"{company} filed {form_name}",
+                source="SEC EDGAR",
+                category="finance",
+                url=f"https://www.sec.gov/edgar/browse/?CIK={cik.lstrip('0')}",
+                score=score,
+                velocity=score,
+                summary=f"SEC filing {form_name} submitted {filing_date}".strip(),
+                metadata={"cik": cik, "form": form_name, "accession": accession, "filing_date": filing_date},
+            )
+        )
+    return records
+
+
+def parse_duckduckgo_results(text: str) -> list[SignalRecord]:
+    links = re.findall(r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', text, flags=re.I | re.S)
+    snippets = re.findall(r'<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>|<div[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</div>', text, flags=re.I | re.S)
+    snippet_texts = [_clean_html(next((part for part in pair if part), "")) for pair in snippets]
+    records: list[SignalRecord] = []
+    for index, (url, title_html) in enumerate(links[:8]):
+        title = _clean_html(title_html)
+        if not title:
+            continue
+        summary = snippet_texts[index] if index < len(snippet_texts) else ""
+        records.append(
+            SignalRecord(
+                id=f"duckduckgo:{index}:{title}",
+                topic=infer_topic(title),
+                title=title,
+                source="DuckDuckGo",
+                category="search",
+                url=html.unescape(url),
+                score=65 + min(index, 5),
+                velocity=max(1, 8 - index),
+                summary=summary[:280],
+            )
+        )
+    return records
+
+
+def parse_paperswithcode_results(payload: dict[str, Any] | list[dict[str, Any]]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in _payload_list(payload, "results"):
+        title = str(item.get("title") or "Papers With Code paper")
+        repositories = [repo for repo in item.get("repositories") or [] if isinstance(repo, dict)]
+        repo_stars = max([_as_int(repo.get("stars")) for repo in repositories] or [0])
+        records.append(
+            SignalRecord(
+                id=f"pwc:{item.get('id', title)}",
+                topic=infer_topic(title),
+                title=title,
+                source="Papers With Code",
+                category="research",
+                url=str(item.get("url_abs") or item.get("url") or "https://paperswithcode.com"),
+                score=min(68 + repo_stars // 100, 100),
+                velocity=max(1, repo_stars),
+                summary=str(item.get("abstract") or "")[:280],
+                metadata={"repo_stars": repo_stars},
+            )
+        )
+    return records
+
+
+def _clean_html(value: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", "", value)).strip()
+
+
 class GitHubSearchCollector(HTTPCollector):
     def __init__(self, topic: str = "agentic ai") -> None:
         super().__init__(name="GitHub Search", category="code")
@@ -682,6 +793,60 @@ class SteamCollector(HTTPCollector):
             return sample_signals("app_stores")
 
 
+class DuckDuckGoCollector(HTTPCollector):
+    def __init__(self, query: str = "browser agents startup pain") -> None:
+        super().__init__(name="DuckDuckGo", category="search")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            text = self.get_text("https://duckduckgo.com/html/", q=self.query)
+            records = parse_duckduckgo_results(text)
+            return records or sample_signals("search")
+        except Exception:
+            return sample_signals("search")
+
+
+class YCCompaniesCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="YC Companies", category="finance")
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://www.ycombinator.com/companies.json")
+            return parse_yc_companies(data if isinstance(data, (dict, list)) else [])
+        except Exception:
+            return sample_signals("finance")
+
+
+class SECEdgarCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="SEC EDGAR", category="finance")
+
+    def collect(self) -> list[SignalRecord]:
+        records: list[SignalRecord] = []
+        for cik in ["0001045810", "0000789019"]:
+            try:
+                data = self.get_json(f"https://data.sec.gov/submissions/CIK{cik}.json")
+                records.extend(parse_sec_submissions(data if isinstance(data, dict) else {}))
+            except Exception:
+                records.extend(sample_signals("finance")[:1])
+        return records
+
+
+class PapersWithCodeCollector(HTTPCollector):
+    def __init__(self, query: str = "agentic ai") -> None:
+        super().__init__(name="Papers With Code", category="research")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://paperswithcode.com/api/v1/papers/", q=self.query)
+            return parse_paperswithcode_results(data if isinstance(data, dict) else [])
+        except Exception:
+            return sample_signals("research")
+
+
 class SpecialIntelligenceCollector:
     name = "Special Intelligence"
     category = "mixed"
@@ -709,6 +874,10 @@ def default_collectors(use_live_network: bool = True) -> list[object]:
         CoinGeckoCollector(),
         ITunesCollector(),
         SteamCollector(),
+        DuckDuckGoCollector(),
+        YCCompaniesCollector(),
+        SECEdgarCollector(),
+        PapersWithCodeCollector(),
         PackageCollector(),
         SpecialIntelligenceCollector(),
     ]
@@ -751,6 +920,9 @@ def sample_signals(category: str) -> list[SignalRecord]:
         ],
         "finance": [
             ("ai infrastructure", "Funding pulse favors AI infrastructure tooling", "YC Companies", 73, "https://www.ycombinator.com/companies"),
+        ],
+        "search": [
+            ("browser agents", "Search results show browser agents startup pain", "DuckDuckGo", 67, "https://duckduckgo.com"),
         ],
         "app_stores": [
             ("ai assistant pain", "Users complain about expensive AI assistant subscriptions", "iTunes App Store", 66, "https://itunes.apple.com"),
