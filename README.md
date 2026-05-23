@@ -11,6 +11,7 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 - Cross-source validation, deduplication, scoring, and local-first LLM routing.
 - Profile-aware relevance scoring from `config/interests.yaml`, including skills, interests, goals, blocked topics, alert threshold, and suggested Radar Search queries.
 - Architecture-style alert templates for hackathons, startup gaps, research signals, funding signals, and skill radar items, filtered by profile threshold and notification channels.
+- Scheduler job catalog for the architecture cadence map, plus smart triggers for high scores, 3-source topic spikes, and hackathon crowd jumps.
 - Special intelligence modules for abandoned-tool opportunities, conference topic radar, salary velocity, and early wave prediction.
 - Ollama integration with installed local models such as `qwen2.5:0.5b`; rule fallback when Ollama is unavailable.
 - Streamlit dashboard with all 13 architecture pages.
