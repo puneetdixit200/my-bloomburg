@@ -1,0 +1,72 @@
+x-radar-environment: &radar-environment
+  INTERNET_RADAR_DB: /data/radar.sqlite
+  INTERNET_RADAR_USE_LIVE: ${INTERNET_RADAR_USE_LIVE:-0}
+  INTERNET_RADAR_NTFY_TOPIC: ${INTERNET_RADAR_NTFY_TOPIC:-}
+  INTERNET_RADAR_NTFY_SERVER: ${INTERNET_RADAR_NTFY_SERVER:-https://ntfy.sh}
+  OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+  GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+  REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
+  REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+  DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+  MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
+  MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+  INTERNET_RADAR_EMAIL_TO: ${INTERNET_RADAR_EMAIL_TO:-}
+  INTERNET_RADAR_EMAIL_FROM: ${INTERNET_RADAR_EMAIL_FROM:-}
+
+services:
+  dashboard:
+    image: python:3.12-slim
+    working_dir: /app
+    environment:
+      <<: *radar-environment
+    volumes:
+      - .:/app
+      - radar-data:/data
+    ports:
+      - "8501:8501"
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+      streamlit run dashboard/app.py --server.address 0.0.0.0 --server.port 8501"
+
+  scheduler:
+    image: python:3.12-slim
+    working_dir: /app
+    profiles:
+      - background
+    environment:
+      <<: *radar-environment
+    volumes:
+      - .:/app
+      - radar-data:/data
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+      python scheduler/runner.py"
+
+  telegram-bot:
+    image: python:3.12-slim
+    working_dir: /app
+    profiles:
+      - alerts
+    environment:
+      <<: *radar-environment
+    volumes:
+      - .:/app
+      - radar-data:/data
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+      python alerts/telegram_bot.py --watch"
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - local-llm
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+volumes:
+  radar-data:
+  ollama:

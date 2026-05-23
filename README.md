@@ -53,6 +53,28 @@ uv run streamlit run dashboard/app.py --server.headless true --server.port 8501
 
 Open `http://localhost:8501`.
 
+The architecture-compatible root commands also work from the repo checkout:
+
+```bash
+python scheduler/runner.py
+python scheduler/runner.py --once
+python alerts/telegram_bot.py
+```
+
+`alerts/telegram_bot.py` runs once by default. Add `--watch` to keep polling.
+
+## Docker Compose
+
+```bash
+docker compose up dashboard
+docker compose --profile background up scheduler
+docker compose --profile alerts up telegram-bot
+docker compose --profile local-llm up ollama
+```
+
+Compose stores app data in named volumes instead of the repo checkout.
+If a `.env` file is present, Docker Compose uses it for the interpolated API key and alert credentials.
+
 ## Run One Collection
 
 ```bash
