@@ -26,6 +26,41 @@ def test_embed_router_prefers_ollama_nomic_when_available():
     assert choice.model == "nomic-embed-text"
 
 
+def test_embed_router_uses_cohere_key_as_online_fallback():
+    from internet_radar.brain.embed_engine import CohereEmbedder, EmbeddingRouter
+
+    router = EmbeddingRouter(available_models=[], cohere_api_key="cohere-key")
+
+    choice = router.route()
+
+    assert choice.provider == "cohere"
+    assert choice.model == "embed-english-light-v3.0"
+    assert isinstance(router.embedder(), CohereEmbedder)
+
+
+def test_cohere_embedder_normalizes_response_without_real_network():
+    from internet_radar.brain.embed_engine import CohereEmbedder
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {"embeddings": [[3, 4]]}
+
+    calls: list[dict[str, object]] = []
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return FakeResponse()
+
+    embedder = CohereEmbedder(api_key="cohere-key", http_post=fake_post)
+
+    assert embedder.embed("browser agents") == [0.6, 0.8]
+    assert calls[0]["url"] == "https://api.cohere.com/v1/embed"
+    assert calls[0]["headers"]["Authorization"] == "Bearer cohere-key"
+
+
 def test_vector_store_search_ranks_semantic_matches():
     from internet_radar.storage.vector_store import SemanticVectorStore
 

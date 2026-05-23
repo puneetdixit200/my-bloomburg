@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import requests
 
+from internet_radar.brain.local_llm import OllamaClient
+
+
+HttpPost = Callable[..., Any]
 
 @dataclass(frozen=True)
 class EmbeddingChoice:
@@ -30,9 +37,9 @@ class DeterministicEmbedder:
 
 
 class OllamaEmbedder:
-    def __init__(self, model: str = "nomic-embed-text", host: str = "http://localhost:11434", timeout: float = 10.0) -> None:
+    def __init__(self, model: str = "nomic-embed-text", host: str | None = None, timeout: float = 10.0) -> None:
         self.model = model
-        self.host = host.rstrip("/")
+        self.host = (host or os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
         self.timeout = timeout
 
     def embed(self, text: str) -> list[float]:
@@ -48,19 +55,65 @@ class OllamaEmbedder:
         return _normalize([float(value) for value in embedding])
 
 
+class CohereEmbedder:
+    def __init__(
+        self,
+        model: str = "embed-english-light-v3.0",
+        api_key: str | None = None,
+        timeout: float = 10.0,
+        http_post: HttpPost = requests.post,
+    ) -> None:
+        self.model = model
+        self.api_key = api_key or os.getenv("COHERE_API_KEY", "")
+        self.timeout = timeout
+        self.http_post = http_post
+
+    def embed(self, text: str) -> list[float]:
+        if not self.api_key:
+            return []
+        response = self.http_post(
+            "https://api.cohere.com/v1/embed",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json={"texts": [text[:8000]], "model": self.model, "input_type": "search_document"},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        embeddings = response.json().get("embeddings", [])
+        if not embeddings or not isinstance(embeddings[0], list):
+            return []
+        return _normalize([float(value) for value in embeddings[0]])
+
+
 class EmbeddingRouter:
-    def __init__(self, available_models: list[str] | None = None) -> None:
-        self.available_models = available_models or []
+    def __init__(
+        self,
+        available_models: list[str] | None = None,
+        cohere_api_key: str | None = None,
+        ollama_client: OllamaClient | None = None,
+    ) -> None:
+        self._available_models = available_models
+        self.cohere_api_key = cohere_api_key if cohere_api_key is not None else os.getenv("COHERE_API_KEY", "")
+        self.ollama_client = ollama_client or OllamaClient()
+
+    @property
+    def available_models(self) -> list[str]:
+        if self._available_models is None:
+            self._available_models = self.ollama_client.available_models()
+        return self._available_models
 
     def route(self) -> EmbeddingChoice:
         if "nomic-embed-text" in self.available_models:
             return EmbeddingChoice(provider="ollama", model="nomic-embed-text", reason="local embedding model")
+        if self.cohere_api_key:
+            return EmbeddingChoice(provider="cohere", model="embed-english-light-v3.0", reason="online free-tier embedding fallback")
         return EmbeddingChoice(provider="deterministic", model="hashed-bow", reason="space-conscious local fallback")
 
-    def embedder(self) -> DeterministicEmbedder | OllamaEmbedder:
+    def embedder(self) -> DeterministicEmbedder | OllamaEmbedder | CohereEmbedder:
         choice = self.route()
         if choice.provider == "ollama":
             return OllamaEmbedder(model=choice.model)
+        if choice.provider == "cohere":
+            return CohereEmbedder(model=choice.model, api_key=self.cohere_api_key)
         return DeterministicEmbedder()
 
 
