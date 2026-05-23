@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from internet_radar.storage.models import PageDefinition, SignalRecord
+from internet_radar.brain.relevance_scorer import rank_for_profile
+from internet_radar.search.radar_search import analyze_query
+from internet_radar.storage.models import PageDefinition, SignalRecord, UserProfile
 
 
 PAGE_DEFINITIONS = [
@@ -23,12 +25,24 @@ PAGE_DEFINITIONS = [
 ]
 
 
-def build_dashboard_payload(signals: list[SignalRecord], active_sources: int = 0, llm_status: str = "unknown") -> dict[str, dict[str, Any]]:
+def build_dashboard_payload(
+    signals: list[SignalRecord],
+    active_sources: int = 0,
+    llm_status: str = "unknown",
+    profile: UserProfile | None = None,
+) -> dict[str, dict[str, Any]]:
     by_category: dict[str, list[SignalRecord]] = defaultdict(list)
     for signal in sorted(signals, key=lambda item: item.score, reverse=True):
         by_category[signal.category].append(signal)
 
     all_signals = sorted(signals, key=lambda item: item.score, reverse=True)
+    profile = profile or UserProfile()
+    personalized_signals = rank_for_profile(all_signals, profile, limit=10)
+    suggested_queries = profile.interests[:5] or [signal.topic for signal in all_signals[:5]]
+    query_analysis = {
+        query: analyze_query(all_signals, query, profile=profile)
+        for query in suggested_queries
+    }
     payload: dict[str, dict[str, Any]] = {}
     for page in PAGE_DEFINITIONS:
         if page.category == "all":
@@ -49,5 +63,9 @@ def build_dashboard_payload(signals: list[SignalRecord], active_sources: int = 0
             "active_sources": active_sources,
             "signals_24h": len(all_signals),
             "llm_status": llm_status,
+            "personalized_signals": personalized_signals,
+            "profile": profile.model_dump(),
+            "suggested_queries": suggested_queries,
+            "query_analysis": query_analysis,
         }
     return payload

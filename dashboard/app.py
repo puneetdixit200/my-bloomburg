@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import streamlit as st
 
+from internet_radar.config.settings import load_user_profile
 from internet_radar.dashboard_data import PAGE_DEFINITIONS, build_dashboard_payload
 from internet_radar.pipeline import run_radar_once
 from internet_radar.sources.registry import SOURCE_REGISTRY, enabled_sources
@@ -16,6 +17,7 @@ def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
         [
             {
                 "score": signal.score,
+                "relevance": signal.metadata.get("relevance_score", ""),
                 "topic": signal.topic,
                 "title": signal.title,
                 "source": signal.source,
@@ -30,6 +32,20 @@ def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
 def render_page(page_key: str, page_payload: dict[str, object]) -> None:
     st.subheader(str(page_payload["title"]))
     st.caption(str(page_payload["description"]))
+
+    if page_key == "profile":
+        profile = dict(page_payload.get("profile", {}))
+        st.json(profile)
+        personalized = list(page_payload.get("personalized_signals", []))
+        if personalized:
+            st.subheader("Personalized Feed")
+            st.dataframe(_signals_to_frame(personalized), width="stretch", hide_index=True)
+        return
+
+    if page_key == "radar_search":
+        st.write("Suggested queries")
+        st.json(page_payload.get("query_analysis", {}))
+
     signals = list(page_payload.get("signals", []))
     if signals:
         st.dataframe(_signals_to_frame(signals), width="stretch", hide_index=True)
@@ -62,10 +78,12 @@ def render_page_entry(page_key: str) -> None:
 
 def load_payload(use_live_network: bool = False) -> dict[str, dict[str, object]]:
     briefing = run_radar_once(use_live_network=use_live_network)
+    profile = load_user_profile()
     return build_dashboard_payload(
         briefing.top_signals,
         active_sources=briefing.active_sources,
         llm_status=briefing.llm_status,
+        profile=profile,
     )
 
 
