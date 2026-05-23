@@ -46,6 +46,15 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
         st.write("Suggested queries")
         st.json(page_payload.get("query_analysis", {}))
 
+    if page_key == "briefing":
+        alerts = list(page_payload.get("alerts", []))
+        if alerts:
+            st.subheader("Act Now")
+            for alert in alerts[:5]:
+                st.markdown(f"**{alert.title}**")
+                st.caption(f"{alert.kind} | score {alert.score} | channels: {', '.join(alert.channels)}")
+                st.code(alert.body)
+
     signals = list(page_payload.get("signals", []))
     if signals:
         st.dataframe(_signals_to_frame(signals), width="stretch", hide_index=True)

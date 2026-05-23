@@ -16,3 +16,6 @@ profile:
     - spot startup gaps from user pain
   blocked_topics: []
   alert_threshold: 80
+  notification_channels:
+    - ntfy
+  llm_preference: auto

@@ -44,9 +44,12 @@ def rank_for_profile(signals: list[SignalRecord], profile: UserProfile, limit: i
         relevance = score_signal_relevance(signal, profile)
         if relevance.score <= 0:
             continue
-        signal.metadata["relevance_score"] = relevance.score
+        existing_score = signal.metadata.get("relevance_score", 0)
+        if not isinstance(existing_score, (int, float)):
+            existing_score = 0
+        signal.metadata["relevance_score"] = max(relevance.score, int(existing_score))
         signal.metadata["relevance_reasons"] = relevance.reasons
-        ranked.append((relevance.score + signal.score, signal))
+        ranked.append((int(signal.metadata["relevance_score"]) + signal.score, signal))
 
     ordered = [signal for _, signal in sorted(ranked, key=lambda item: (item[0], item[1].score), reverse=True)]
     return ordered[:limit] if limit else ordered

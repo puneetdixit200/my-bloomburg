@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from internet_radar.alerts.alert_manager import build_alerts
 from internet_radar.brain.relevance_scorer import rank_for_profile
 from internet_radar.search.radar_search import analyze_query
 from internet_radar.storage.models import PageDefinition, SignalRecord, UserProfile
@@ -38,6 +39,7 @@ def build_dashboard_payload(
     all_signals = sorted(signals, key=lambda item: item.score, reverse=True)
     profile = profile or UserProfile()
     personalized_signals = rank_for_profile(all_signals, profile, limit=10)
+    alerts = build_alerts(all_signals, profile)
     suggested_queries = profile.interests[:5] or [signal.topic for signal in all_signals[:5]]
     query_analysis = {
         query: analyze_query(all_signals, query, profile=profile)
@@ -64,6 +66,7 @@ def build_dashboard_payload(
             "signals_24h": len(all_signals),
             "llm_status": llm_status,
             "personalized_signals": personalized_signals,
+            "alerts": alerts,
             "profile": profile.model_dump(),
             "suggested_queries": suggested_queries,
             "query_analysis": query_analysis,
