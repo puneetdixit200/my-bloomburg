@@ -9,6 +9,7 @@ from internet_radar.search.radar_search import analyze_query
 from internet_radar.signals.gap_finder import find_startup_gaps
 from internet_radar.signals.sentiment_pipeline import enrich_signals_with_sentiment, summarize_sentiment
 from internet_radar.storage.models import PageDefinition, SignalRecord, UserProfile
+from internet_radar.storage.vector_store import build_semantic_clusters
 
 
 PAGE_DEFINITIONS = [
@@ -49,6 +50,7 @@ def build_dashboard_payload(
         for query in suggested_queries
     }
     gap_clusters = find_startup_gaps(all_signals)
+    semantic_clusters = build_semantic_clusters(all_signals)
     payload: dict[str, dict[str, Any]] = {}
     for page in PAGE_DEFINITIONS:
         if page.category == "all":
@@ -73,6 +75,7 @@ def build_dashboard_payload(
             "alerts": alerts,
             "gap_clusters": gap_clusters,
             "pain_clusters": gap_clusters,
+            "semantic_clusters": semantic_clusters,
             "sentiment_summary": summarize_sentiment(page_signals),
             "profile": profile.model_dump(),
             "suggested_queries": suggested_queries,

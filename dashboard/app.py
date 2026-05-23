@@ -52,6 +52,20 @@ def _sentiment_to_frame(summary: dict[str, int]) -> pd.DataFrame:
     )
 
 
+def _semantic_clusters_to_frame(clusters: list[object]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "label": getattr(cluster, "label", ""),
+                "signals": getattr(cluster, "size", 0),
+                "sources": ", ".join(getattr(cluster, "sources", [])),
+                "keywords": ", ".join(getattr(cluster, "keywords", [])),
+            }
+            for cluster in clusters
+        ]
+    )
+
+
 def render_page(page_key: str, page_payload: dict[str, object]) -> None:
     st.subheader(str(page_payload["title"]))
     st.caption(str(page_payload["description"]))
@@ -84,6 +98,10 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
         if gaps:
             st.subheader("Pain Clusters")
             st.dataframe(_gaps_to_frame(gaps), width="stretch", hide_index=True)
+        semantic_clusters = list(page_payload.get("semantic_clusters", []))
+        if semantic_clusters:
+            st.subheader("Semantic Clusters")
+            st.dataframe(_semantic_clusters_to_frame(semantic_clusters), width="stretch", hide_index=True)
 
     if page_key == "community_pulse":
         summary = page_payload.get("sentiment_summary", {})
