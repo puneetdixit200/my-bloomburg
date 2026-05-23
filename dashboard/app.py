@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 import os
 
 import pandas as pd
@@ -100,7 +101,13 @@ def _source_agreements_to_frame(agreements: list[object]) -> pd.DataFrame:
 
 
 def _objects_to_frame(items: list[object]) -> pd.DataFrame:
-    return pd.DataFrame([getattr(item, "__dict__", {}) for item in items])
+    rows = []
+    for item in items:
+        if is_dataclass(item):
+            rows.append(asdict(item))
+        else:
+            rows.append(getattr(item, "__dict__", {}))
+    return pd.DataFrame(rows)
 
 
 def render_page(page_key: str, page_payload: dict[str, object]) -> None:
@@ -121,6 +128,11 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
         st.json(page_payload.get("query_analysis", {}))
 
     if page_key == "briefing":
+        signal_summary = page_payload.get("signal_summary")
+        if signal_summary:
+            st.subheader("Signal Summary")
+            st.write(getattr(signal_summary, "headline", ""))
+            st.write(getattr(signal_summary, "next_action", ""))
         daily_briefing = page_payload.get("daily_briefing", {})
         if isinstance(daily_briefing, dict) and daily_briefing:
             st.subheader("Daily Brief")
@@ -148,6 +160,10 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
         if correlations:
             st.subheader("Trend Correlations")
             st.dataframe(_objects_to_frame(correlations), width="stretch", hide_index=True)
+        predictions = list(page_payload.get("trend_predictions", []))
+        if predictions:
+            st.subheader("Trend Predictions")
+            st.dataframe(_objects_to_frame(predictions), width="stretch", hide_index=True)
 
     if page_key == "hackathon_radar":
         predictions = list(page_payload.get("crowd_predictions", []))
@@ -168,6 +184,14 @@ def render_page(page_key: str, page_payload: dict[str, object]) -> None:
             st.dataframe(_objects_to_frame(funding_signals), width="stretch", hide_index=True)
 
     if page_key in {"startup_gaps", "app_store_pain"}:
+        analyses = list(page_payload.get("gap_analyses", []))
+        if page_key == "startup_gaps" and analyses:
+            st.subheader("Gap Analysis")
+            st.dataframe(_objects_to_frame(analyses), width="stretch", hide_index=True)
+        validations = list(page_payload.get("idea_validations", []))
+        if page_key == "startup_gaps" and validations:
+            st.subheader("Idea Validation")
+            st.dataframe(_objects_to_frame(validations), width="stretch", hide_index=True)
         gap_key = "pain_clusters" if page_key == "app_store_pain" else "gap_clusters"
         gaps = list(page_payload.get(gap_key, []))
         if gaps:

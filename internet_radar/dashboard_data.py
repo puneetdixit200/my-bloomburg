@@ -5,8 +5,14 @@ from typing import Any
 
 from internet_radar.alerts.alert_manager import build_alerts
 from internet_radar.brain.briefing_writer import write_daily_briefing
+from internet_radar.brain.classifier import classify_signals
+from internet_radar.brain.gap_analyzer import analyze_gaps
+from internet_radar.brain.idea_validator import validate_ideas
+from internet_radar.brain.llm_router import LLMRouter
 from internet_radar.brain.relevance_scorer import rank_for_profile
 from internet_radar.brain.skill_recommender import recommend_skills
+from internet_radar.brain.summarizer import summarize_signals
+from internet_radar.brain.trend_predictor import predict_trends
 from internet_radar.scoring.funding_scorer import FundingScorer
 from internet_radar.scoring.research_signal_scorer import ResearchSignalScorer
 from internet_radar.search.radar_search import analyze_query
@@ -52,6 +58,7 @@ def build_dashboard_payload(
 
     all_signals = sorted(signals, key=lambda item: item.score, reverse=True)
     profile = profile or UserProfile()
+    router = LLMRouter()
     personalized_signals = rank_for_profile(all_signals, profile, limit=10)
     alerts = build_alerts(all_signals, profile)
     suggested_queries = profile.interests[:5] or [signal.topic for signal in all_signals[:5]]
@@ -70,6 +77,16 @@ def build_dashboard_payload(
         for signal in all_signals
         if signal.category == "hackathons"
     ]
+    signal_summary = summarize_signals(all_signals, router=router)
+    classifications = classify_signals(all_signals, router=router, allow_network=False)
+    gap_analyses = analyze_gaps(all_signals, router=router)
+    trend_predictions = predict_trends(all_signals, router=router)
+    idea_validations = validate_ideas(
+        [analysis.startup_ideas[0].idea for analysis in gap_analyses if analysis.startup_ideas],
+        all_signals,
+        profile=profile,
+        router=router,
+    )
     daily_briefing = write_daily_briefing(all_signals, active_sources=active_sources, llm_status=llm_status)
     skill_recommendations = recommend_skills(all_signals, profile=profile)
     payload: dict[str, dict[str, Any]] = {}
@@ -103,6 +120,11 @@ def build_dashboard_payload(
             "academic_signals": academic_signals,
             "funding_signals": funding_signals,
             "crowd_predictions": crowd_predictions,
+            "signal_summary": signal_summary,
+            "classifications": classifications,
+            "gap_analyses": gap_analyses,
+            "trend_predictions": trend_predictions,
+            "idea_validations": idea_validations,
             "skill_recommendations": skill_recommendations,
             "sentiment_summary": summarize_sentiment(page_signals),
             "profile": profile.model_dump(),
