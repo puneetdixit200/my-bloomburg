@@ -150,3 +150,19 @@ def test_dashboard_report_and_source_health_frames():
     assert "MCP repo spike" in report
     assert health.iloc[0]["source"] == "GitHub Search"
     assert health.iloc[0]["signals"] == 1
+
+
+def test_dashboard_free_only_guardrails_show_paid_paths(monkeypatch):
+    from dashboard.app import _free_only_guardrails_frame
+
+    monkeypatch.setenv("INTERNET_RADAR_FREE_ONLY", "1")
+    free_only_frame = _free_only_guardrails_frame()
+
+    assert list(free_only_frame["integration"]) == ["Brave Search API", "Crunchbase API", "Mailgun Email"]
+    assert set(free_only_frame["status"]) == {"disabled"}
+    assert all("free-only" in reason for reason in free_only_frame["reason"])
+
+    monkeypatch.setenv("INTERNET_RADAR_FREE_ONLY", "0")
+    configured_frame = _free_only_guardrails_frame()
+
+    assert set(configured_frame["status"]) == {"credential-gated"}

@@ -61,6 +61,24 @@ def _source_health_frame(page_payload: dict[str, object], category: str | None =
     return pd.DataFrame(rows)
 
 
+def _free_only_guardrails_frame(free_only: bool | None = None) -> pd.DataFrame:
+    if free_only is None:
+        free_only = os.getenv("INTERNET_RADAR_FREE_ONLY", "0") == "1"
+    status = "disabled" if free_only else "credential-gated"
+    reason = (
+        "Disabled by free-only mode so paid network calls stay off."
+        if free_only
+        else "Requires explicit credentials before any network call is attempted."
+    )
+    return pd.DataFrame(
+        [
+            {"integration": "Brave Search API", "surface": "collector", "status": status, "reason": reason},
+            {"integration": "Crunchbase API", "surface": "collector", "status": status, "reason": reason},
+            {"integration": "Mailgun Email", "surface": "alerts", "status": status, "reason": reason},
+        ]
+    )
+
+
 def _source_category(source_name: str) -> str | None:
     for source in SOURCE_REGISTRY:
         if source.name == source_name:
@@ -521,6 +539,9 @@ def render_dashboard(payload: dict[str, dict[str, object]], filters: dict[str, A
     freshness_cols[1].metric("Payload", "cache" if collection.get("loaded_from_cache") else "fresh")
     freshness_cols[2].metric("Collection seconds", f"{float(collection.get('duration_seconds') or 0):.1f}")
     freshness_cols[3].metric("Generated", _format_generated_at(collection.get("generated_at")))
+    free_only = os.getenv("INTERNET_RADAR_FREE_ONLY", "0") == "1"
+    with st.expander("Free-only Guardrails", expanded=free_only):
+        st.table(_free_only_guardrails_frame(free_only))
     st.download_button(
         "Download Daily Report",
         _build_markdown_report(payload).encode("utf-8"),
