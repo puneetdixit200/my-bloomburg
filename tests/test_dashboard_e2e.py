@@ -14,8 +14,8 @@ def test_streamlit_app_renders_all_tabs_without_exceptions(tmp_path, monkeypatch
     assert [(metric.label, metric.value) for metric in app.metric][:4] == [
         ("Active sources", "1"),
         ("Signals", "14"),
-        ("Registered sources", "66"),
-        ("Enabled by default", "46"),
+        ("Registered sources", "80"),
+        ("Enabled by default", "60"),
     ]
     assert [tab.label for tab in app.tabs] == [
         "Morning Intelligence Briefing",

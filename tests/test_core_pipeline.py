@@ -685,6 +685,33 @@ def test_default_live_collectors_cover_enabled_registry_sources():
     assert enabled_names <= live_names
 
 
+def test_new_free_sources_are_enabled_by_default():
+    from internet_radar.collectors.live import default_collectors
+    from internet_radar.sources.registry import enabled_sources
+
+    expected = {
+        "Crossref",
+        "Europe PMC",
+        "PubMed",
+        "bioRxiv",
+        "medRxiv",
+        "GDELT",
+        "Common Crawl",
+        "Greenhouse Jobs",
+        "Lever Jobs",
+        "Grants.gov",
+        "USAspending",
+        "Docker Hub",
+        "RubyGems",
+        "F-Droid",
+    }
+    enabled_names = {source.name for source in enabled_sources()}
+    collector_names = {collector.name for collector in default_collectors(use_live_network=True)}
+
+    assert expected <= enabled_names
+    assert expected <= collector_names
+
+
 def test_google_trends_collector_uses_source_specific_fallback(monkeypatch):
     from internet_radar.collectors.live import GoogleTrendsCollector
 
@@ -794,6 +821,151 @@ def test_keyed_architecture_collectors_parse_representative_payloads():
     assert parse_tavily_results(
         {"answer": "Browser agents are rising.", "results": [{"title": "Browser agents report", "url": "https://example.com", "content": "Browser agents keep rising.", "score": 0.8}]}
     )[0].score == 90
+
+
+def test_new_free_collectors_parse_representative_payloads():
+    from internet_radar.collectors.live import (
+        parse_biorxiv_papers,
+        parse_common_crawl_results,
+        parse_crossref_works,
+        parse_dockerhub_repositories,
+        parse_europepmc_results,
+        parse_fdroid_index,
+        parse_gdelt_articles,
+        parse_grantsgov_opportunities,
+        parse_greenhouse_jobs,
+        parse_lever_jobs,
+        parse_pubmed_esearch,
+        parse_rubygems_results,
+        parse_usaspending_awards,
+    )
+
+    assert parse_crossref_works(
+        {"message": {"items": [{"DOI": "10.123/agent", "title": ["Agent Browser Study"], "is-referenced-by-count": 42, "URL": "https://doi.org/10.123/agent"}]}}
+    )[0].source == "Crossref"
+
+    assert parse_europepmc_results(
+        {"resultList": {"result": [{"id": "PMC1", "title": "Agentic automation in biomedicine", "citedByCount": 12, "journalTitle": "AI Journal"}]}}
+    )[0].source == "Europe PMC"
+
+    assert parse_pubmed_esearch({"esearchresult": {"idlist": ["123", "456"], "count": "18"}})[0].metadata["result_count"] == 18
+
+    assert parse_biorxiv_papers(
+        "bioRxiv",
+        {"collection": [{"doi": "10.1101/agent", "title": "Agent systems preprint", "abstract": "A browser agent preprint.", "date": "2026-05-20"}]},
+    )[0].source == "bioRxiv"
+
+    assert parse_gdelt_articles(
+        {"articles": [{"title": "AI agents reshape software", "url": "https://news.example/agents", "domain": "news.example", "seendate": "20260526T120000Z"}]}
+    )[0].source == "GDELT"
+
+    assert parse_common_crawl_results(
+        [{"url": "https://example.com/agents", "mime": "text/html", "timestamp": "20260526000000", "status": "200"}]
+    )[0].source == "Common Crawl"
+
+    assert parse_greenhouse_jobs(
+        {"jobs": [{"id": 1, "title": "AI Intern", "absolute_url": "https://boards.greenhouse.io/example/jobs/1", "location": {"name": "Remote"}}]},
+        board="example",
+    )[0].source == "Greenhouse Jobs"
+
+    assert parse_lever_jobs(
+        [{"id": "job-1", "text": "AI Platform Intern", "hostedUrl": "https://jobs.lever.co/example/job-1", "categories": {"location": "Remote"}}],
+        company="example",
+    )[0].source == "Lever Jobs"
+
+    assert parse_grantsgov_opportunities(
+        {"oppHits": [{"id": "opp-1", "title": "AI Research Grant", "agency": "NSF", "openDate": "2026-05-01"}]}
+    )[0].source == "Grants.gov"
+
+    assert parse_usaspending_awards(
+        {"results": [{"Award ID": "FAIN-1", "Recipient Name": "Agent Labs", "Award Amount": 1200000, "Awarding Agency": "NSF"}]}
+    )[0].metadata["amount"] == 1200000
+
+    assert parse_dockerhub_repositories(
+        {"results": [{"name": "agent-runtime", "namespace": "example", "pull_count": 12345, "star_count": 90, "description": "Browser agent runtime"}]}
+    )[0].source == "Docker Hub"
+
+    assert parse_rubygems_results(
+        [{"name": "agentic", "info": "Agent workflow gem", "downloads": 1234, "project_uri": "https://rubygems.org/gems/agentic"}]
+    )[0].source == "RubyGems"
+
+    assert parse_fdroid_index(
+        {"packages": {"org.example.agent": {"metadata": {"name": {"en-US": "Agent App"}, "summary": {"en-US": "Local AI assistant"}}, "versions": {}}}}
+    )[0].source == "F-Droid"
+
+
+def test_new_free_collectors_use_live_friendly_defaults():
+    from internet_radar.collectors.live import CommonCrawlCollector, GreenhouseJobsCollector, LeverJobsCollector, USASpendingCollector
+
+    assert GreenhouseJobsCollector().boards == ["databricks", "stripe"]
+    assert LeverJobsCollector().companies == ["spotify", "coupa", "Onehouse", "arcadia"]
+
+    captured: dict[str, object] = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "results": [
+                    {
+                        "Award ID": "FAIN-1",
+                        "Recipient Name": "Agent Labs",
+                        "Award Amount": 1200000,
+                        "Awarding Agency": "NSF",
+                    }
+                ]
+            }
+
+    def fake_post(url: str, **kwargs: object) -> Response:
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        return Response()
+
+    collector = USASpendingCollector(http_post=fake_post)
+    collector.rate_limiter = None
+    records = collector.collect()
+
+    assert captured["url"] == "https://api.usaspending.gov/api/v2/search/spending_by_award/"
+    assert captured["json"] == {
+        "filters": {"keywords": ["artificial intelligence"], "award_type_codes": ["A", "B", "C", "D"]},
+        "fields": ["Award ID", "Recipient Name", "Award Amount", "Awarding Agency"],
+        "page": 1,
+        "limit": 10,
+        "sort": "Award Amount",
+        "order": "desc",
+    }
+    assert records[0].source == "USAspending"
+
+    common_crawl_calls: list[tuple[str, dict[str, object]]] = []
+
+    class CommonCrawlResponse:
+        text = '{"url":"https://example.com/agents","timestamp":"20260526000000","status":"200"}'
+
+        def __init__(self, payload: object | None = None) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            return self.payload
+
+    def fake_get(url: str, **kwargs: object) -> CommonCrawlResponse:
+        common_crawl_calls.append((url, kwargs))
+        if url.endswith("collinfo.json"):
+            return CommonCrawlResponse([{"id": "CC-MAIN-2026-21"}])
+        return CommonCrawlResponse()
+
+    common_crawl = CommonCrawlCollector(target="example.com/*")
+    common_crawl.rate_limiter = None
+    common_crawl.http_get = fake_get
+
+    records = common_crawl.collect()
+
+    assert common_crawl_calls[1][1]["params"] == {"url": "example.com/*", "output": "json", "limit": 10}
+    assert records[0].source == "Common Crawl"
 
 
 def test_keyed_collectors_are_added_to_live_defaults_when_credentials_exist(monkeypatch):

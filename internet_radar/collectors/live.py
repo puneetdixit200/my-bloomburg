@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -1268,8 +1269,335 @@ def parse_tavily_results(payload: dict[str, Any]) -> list[SignalRecord]:
     return records
 
 
+def parse_crossref_works(payload: dict[str, Any]) -> list[SignalRecord]:
+    items = _payload_list(payload.get("message") if isinstance(payload.get("message"), dict) else payload, "items")
+    records: list[SignalRecord] = []
+    for item in items[:10]:
+        title_value = item.get("title") or []
+        title = str(title_value[0] if isinstance(title_value, list) and title_value else title_value or "Crossref work")
+        citations = _as_int(item.get("is-referenced-by-count"))
+        records.append(
+            SignalRecord(
+                id=f"crossref:{item.get('DOI', title)}",
+                topic=infer_topic(title),
+                title=title,
+                source="Crossref",
+                category="research",
+                url=str(item.get("URL") or f"https://doi.org/{item.get('DOI', '')}"),
+                score=min(62 + citations // 10, 100),
+                velocity=max(citations, 1),
+                summary=str(item.get("abstract") or item.get("container-title") or "")[:280],
+                metadata={"doi": item.get("DOI"), "citations": citations},
+            )
+        )
+    return records
+
+
+def parse_europepmc_results(payload: dict[str, Any]) -> list[SignalRecord]:
+    result_list = payload.get("resultList") if isinstance(payload.get("resultList"), dict) else payload
+    records: list[SignalRecord] = []
+    for item in _payload_list(result_list, "result")[:10]:
+        title = str(item.get("title") or "Europe PMC result")
+        citations = _as_int(item.get("citedByCount"))
+        url = _first_nested_url(item.get("fullTextUrlList")) or (f"https://doi.org/{item.get('doi')}" if item.get("doi") else "")
+        records.append(
+            SignalRecord(
+                id=f"europepmc:{item.get('id', title)}",
+                topic=infer_topic(title),
+                title=title,
+                source="Europe PMC",
+                category="research",
+                url=url,
+                score=min(60 + citations // 5, 100),
+                velocity=max(citations, 1),
+                summary=str(item.get("abstractText") or item.get("journalTitle") or "")[:280],
+                metadata={"citations": citations, "journal": item.get("journalTitle"), "year": item.get("pubYear")},
+            )
+        )
+    return records
+
+
+def parse_pubmed_esearch(payload: dict[str, Any]) -> list[SignalRecord]:
+    result = payload.get("esearchresult") if isinstance(payload.get("esearchresult"), dict) else payload
+    id_list = [str(item) for item in result.get("idlist", [])] if isinstance(result, dict) else []
+    count = _as_int(result.get("count") if isinstance(result, dict) else 0)
+    records: list[SignalRecord] = []
+    for index, pubmed_id in enumerate(id_list[:10]):
+        records.append(
+            SignalRecord(
+                id=f"pubmed:{pubmed_id}",
+                topic="pubmed research",
+                title=f"PubMed research result {pubmed_id}",
+                source="PubMed",
+                category="research",
+                url=f"https://pubmed.ncbi.nlm.nih.gov/{pubmed_id}/",
+                score=min(60 + count // 10, 100),
+                velocity=max(count - index, 1),
+                metadata={"pubmed_id": pubmed_id, "result_count": count},
+            )
+        )
+    return records
+
+
+def parse_biorxiv_papers(source_name: str, payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in _payload_list(payload, "collection")[:10]:
+        title = str(item.get("title") or f"{source_name} preprint")
+        records.append(
+            SignalRecord(
+                id=f"{source_name.lower()}:{item.get('doi', title)}",
+                topic=infer_topic(title),
+                title=title,
+                source=source_name,
+                category="research",
+                url=f"https://doi.org/{item.get('doi')}" if item.get("doi") else str(item.get("server") or ""),
+                score=68,
+                velocity=1,
+                summary=str(item.get("abstract") or "")[:280],
+                metadata={"doi": item.get("doi"), "date": item.get("date"), "authors": item.get("authors")},
+            )
+        )
+    return records
+
+
+def parse_gdelt_articles(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for index, item in enumerate(_payload_list(payload, "articles")[:10]):
+        title = str(item.get("title") or "GDELT article")
+        records.append(
+            SignalRecord(
+                id=f"gdelt:{item.get('url', index)}",
+                topic=infer_topic(title),
+                title=title,
+                source="GDELT",
+                category="news",
+                url=str(item.get("url") or ""),
+                score=max(56, 70 - index),
+                velocity=max(10 - index, 1),
+                summary=str(item.get("seendate") or item.get("domain") or "")[:280],
+                metadata={"domain": item.get("domain"), "seen_date": item.get("seendate"), "language": item.get("language")},
+            )
+        )
+    return records
+
+
+def parse_common_crawl_results(payload: list[dict[str, Any]] | str) -> list[SignalRecord]:
+    if isinstance(payload, str):
+        items = [json.loads(line) for line in payload.splitlines() if line.strip()]
+    else:
+        items = payload
+    records: list[SignalRecord] = []
+    for item in items[:10]:
+        url = str(item.get("url") or "")
+        if not url:
+            continue
+        records.append(
+            SignalRecord(
+                id=f"common-crawl:{item.get('digest', item.get('timestamp', url))}",
+                topic=infer_topic(url.replace("https://", "").replace("http://", "")),
+                title=f"Common Crawl captured {url}",
+                source="Common Crawl",
+                category="search",
+                url=url,
+                score=58,
+                velocity=1,
+                metadata={"timestamp": item.get("timestamp"), "mime": item.get("mime"), "status": item.get("status")},
+            )
+        )
+    return records
+
+
+def parse_greenhouse_jobs(payload: dict[str, Any], board: str) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in _payload_list(payload, "jobs")[:10]:
+        title = str(item.get("title") or "Greenhouse job")
+        location = item.get("location") or {}
+        location_name = str(location.get("name") if isinstance(location, dict) else location or "")
+        records.append(
+            SignalRecord(
+                id=f"greenhouse:{board}:{item.get('id', title)}",
+                topic=infer_topic(title),
+                title=f"{title} at {board}",
+                source="Greenhouse Jobs",
+                category="jobs",
+                url=str(item.get("absolute_url") or ""),
+                score=72 if any(term in title.lower() for term in ["ai", "machine learning", "agent", "intern"]) else 58,
+                velocity=1,
+                summary=location_name[:280],
+                metadata={"board": board, "location": location_name, "updated_at": item.get("updated_at")},
+            )
+        )
+    return records
+
+
+def parse_lever_jobs(payload: list[dict[str, Any]] | dict[str, Any], company: str) -> list[SignalRecord]:
+    items = payload if isinstance(payload, list) else _payload_list(payload, "postings")
+    records: list[SignalRecord] = []
+    for item in items[:10]:
+        title = str(item.get("text") or item.get("title") or "Lever job")
+        categories = item.get("categories") or {}
+        location = str(categories.get("location") if isinstance(categories, dict) else "")
+        records.append(
+            SignalRecord(
+                id=f"lever:{company}:{item.get('id', title)}",
+                topic=infer_topic(title),
+                title=f"{title} at {company}",
+                source="Lever Jobs",
+                category="jobs",
+                url=str(item.get("hostedUrl") or item.get("applyUrl") or ""),
+                score=72 if any(term in title.lower() for term in ["ai", "machine learning", "agent", "intern"]) else 58,
+                velocity=1,
+                summary=location[:280],
+                metadata={"company": company, "location": location, "team": categories.get("team") if isinstance(categories, dict) else ""},
+            )
+        )
+    return records
+
+
+def parse_grantsgov_opportunities(payload: dict[str, Any]) -> list[SignalRecord]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    opportunities = _payload_list(data, "oppHits") or _payload_list(data, "opportunities")
+    records: list[SignalRecord] = []
+    for item in opportunities[:10]:
+        title = str(item.get("title") or item.get("oppTitle") or "Grant opportunity")
+        agency = str(item.get("agency") or item.get("agencyCode") or "")
+        records.append(
+            SignalRecord(
+                id=f"grants-gov:{item.get('id', item.get('oppNum', title))}",
+                topic=infer_topic(title),
+                title=title,
+                source="Grants.gov",
+                category="finance",
+                url=str(item.get("url") or "https://www.grants.gov/search-results-detail/" + str(item.get("id", ""))),
+                score=72 if any(term in title.lower() for term in ["ai", "technology", "research", "innovation"]) else 60,
+                velocity=1,
+                summary=agency[:280],
+                metadata={"agency": agency, "open_date": item.get("openDate"), "close_date": item.get("closeDate")},
+            )
+        )
+    return records
+
+
+def parse_usaspending_awards(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in _payload_list(payload, "results")[:10]:
+        award_id = str(item.get("Award ID") or item.get("generated_unique_award_id") or item.get("award_id") or "award")
+        recipient = str(item.get("Recipient Name") or item.get("recipient_name") or "USAspending recipient")
+        amount = _money_to_int(item.get("Award Amount") or item.get("award_amount") or item.get("total_obligation"))
+        agency = str(item.get("Awarding Agency") or item.get("awarding_agency") or "")
+        records.append(
+            SignalRecord(
+                id=f"usaspending:{award_id}",
+                topic=infer_topic(recipient),
+                title=f"{recipient} received public award",
+                source="USAspending",
+                category="finance",
+                url="https://www.usaspending.gov/",
+                score=min(60 + amount // 1_000_000, 100) if amount else 60,
+                velocity=max(amount, 1),
+                summary=agency[:280],
+                metadata={"amount": amount, "agency": agency, "award_id": award_id},
+            )
+        )
+    return records
+
+
+def parse_dockerhub_repositories(payload: dict[str, Any]) -> list[SignalRecord]:
+    records: list[SignalRecord] = []
+    for item in _payload_list(payload, "results")[:10]:
+        namespace = str(item.get("namespace") or item.get("user") or "library")
+        name = str(item.get("name") or "docker image")
+        pulls = _as_int(item.get("pull_count"))
+        stars = _as_int(item.get("star_count"))
+        records.append(
+            SignalRecord(
+                id=f"dockerhub:{namespace}/{name}",
+                topic=infer_topic(name),
+                title=f"{namespace}/{name} container image velocity",
+                source="Docker Hub",
+                category="code",
+                url=f"https://hub.docker.com/r/{namespace}/{name}",
+                score=min(58 + pulls // 100_000 + stars // 50, 100),
+                velocity=max(pulls, stars, 1),
+                summary=str(item.get("description") or "")[:280],
+                metadata={"pulls": pulls, "stars": stars, "last_updated": item.get("last_updated")},
+            )
+        )
+    return records
+
+
+def parse_rubygems_results(payload: list[dict[str, Any]] | dict[str, Any]) -> list[SignalRecord]:
+    items = payload if isinstance(payload, list) else _payload_list(payload, "gems")
+    records: list[SignalRecord] = []
+    for item in items[:10]:
+        name = str(item.get("name") or "ruby gem")
+        downloads = _as_int(item.get("downloads") or item.get("version_downloads"))
+        records.append(
+            SignalRecord(
+                id=f"rubygems:{name}",
+                topic=infer_topic(name),
+                title=f"{name} Ruby gem velocity",
+                source="RubyGems",
+                category="code",
+                url=str(item.get("project_uri") or f"https://rubygems.org/gems/{name}"),
+                score=min(58 + downloads // 10_000, 100),
+                velocity=max(downloads, 1),
+                summary=str(item.get("info") or "")[:280],
+                metadata={"downloads": downloads, "version": item.get("version")},
+            )
+        )
+    return records
+
+
+def parse_fdroid_index(payload: dict[str, Any]) -> list[SignalRecord]:
+    packages = payload.get("packages", {}) if isinstance(payload, dict) else {}
+    records: list[SignalRecord] = []
+    for package_name, item in list(packages.items())[:10]:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else item
+        name = _localized_text(metadata.get("name"), str(package_name)) if isinstance(metadata, dict) else str(package_name)
+        summary = _localized_text(metadata.get("summary"), "") if isinstance(metadata, dict) else ""
+        versions = item.get("versions") if isinstance(item.get("versions"), dict) else {}
+        version_count = len(versions)
+        records.append(
+            SignalRecord(
+                id=f"fdroid:{package_name}",
+                topic=infer_topic(f"{name} {summary}"),
+                title=f"{name} F-Droid app signal",
+                source="F-Droid",
+                category="app_stores",
+                url=f"https://f-droid.org/packages/{package_name}/",
+                score=min(56 + version_count, 100),
+                velocity=max(version_count, 1),
+                summary=summary[:280],
+                metadata={"package": package_name, "versions": version_count},
+            )
+        )
+    return records
+
+
 def _clean_html(value: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", value)).strip()
+
+
+def _localized_text(value: Any, default: str = "") -> str:
+    if isinstance(value, dict):
+        return str(value.get("en-US") or value.get("en") or next(iter(value.values()), default))
+    return str(value or default)
+
+
+def _first_nested_url(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    urls = value.get("fullTextUrl")
+    if isinstance(urls, list):
+        for entry in urls:
+            if isinstance(entry, dict) and entry.get("url"):
+                return str(entry["url"])
+    if isinstance(urls, dict) and urls.get("url"):
+        return str(urls["url"])
+    return ""
 
 
 def _find_child_text(element: ET.Element, local_name: str) -> str:
@@ -2045,6 +2373,234 @@ class PapersWithCodeCollector(HTTPCollector):
             return sample_signals("research")
 
 
+class CrossrefCollector(HTTPCollector):
+    def __init__(self, query: str = "agentic ai") -> None:
+        super().__init__(name="Crossref", category="research")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://api.crossref.org/works", query=self.query, rows=8, sort="published", order="desc")
+            records = parse_crossref_works(data if isinstance(data, dict) else {})
+            return records or source_fallback("Crossref", "research", "crossref research metadata", 62)
+        except Exception:
+            return source_fallback("Crossref", "research", "crossref research metadata", 62)
+
+
+class EuropePMCCollector(HTTPCollector):
+    def __init__(self, query: str = "agentic ai") -> None:
+        super().__init__(name="Europe PMC", category="research")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://www.ebi.ac.uk/europepmc/webservices/rest/search", query=self.query, format="json", pageSize=8)
+            records = parse_europepmc_results(data if isinstance(data, dict) else {})
+            return records or source_fallback("Europe PMC", "research", "europe pmc research", 62)
+        except Exception:
+            return source_fallback("Europe PMC", "research", "europe pmc research", 62)
+
+
+class PubMedCollector(HTTPCollector):
+    def __init__(self, query: str = "agentic ai") -> None:
+        super().__init__(name="PubMed", category="research")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json(
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+                db="pubmed",
+                term=self.query,
+                retmode="json",
+                retmax=8,
+                sort="date",
+            )
+            records = parse_pubmed_esearch(data if isinstance(data, dict) else {})
+            return records or source_fallback("PubMed", "research", "pubmed research", 62)
+        except Exception:
+            return source_fallback("PubMed", "research", "pubmed research", 62)
+
+
+class BioRxivCollector(HTTPCollector):
+    def __init__(self, server: str = "biorxiv") -> None:
+        super().__init__(name="bioRxiv" if server == "biorxiv" else "medRxiv", category="research")
+        self.server = server
+
+    def collect(self) -> list[SignalRecord]:
+        end = datetime.now(UTC)
+        start = end - timedelta(days=14)
+        try:
+            data = self.get_json(f"https://api.biorxiv.org/details/{self.server}/{start:%Y-%m-%d}/{end:%Y-%m-%d}/0")
+            records = parse_biorxiv_papers(self.name, data if isinstance(data, dict) else {})
+            return records or source_fallback(self.name, "research", f"{self.name.lower()} preprints", 64)
+        except Exception:
+            return source_fallback(self.name, "research", f"{self.name.lower()} preprints", 64)
+
+
+class GDELTCollector(HTTPCollector):
+    def __init__(self, query: str = "artificial intelligence") -> None:
+        super().__init__(name="GDELT", category="news")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json(
+                "https://api.gdeltproject.org/api/v2/doc/doc",
+                query=self.query,
+                mode="ArtList",
+                format="json",
+                maxrecords=10,
+                sort="HybridRel",
+            )
+            records = parse_gdelt_articles(data if isinstance(data, dict) else {})
+            return records or source_fallback("GDELT", "news", "global news signals", 62)
+        except Exception:
+            return source_fallback("GDELT", "news", "global news signals", 62)
+
+
+class CommonCrawlCollector(HTTPCollector):
+    def __init__(self, target: str = "openai.com/*") -> None:
+        super().__init__(name="Common Crawl", category="search")
+        self.target = target
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            collections = self.get_json("https://index.commoncrawl.org/collinfo.json")
+            collection_id = str((collections[0] if isinstance(collections, list) and collections else {}).get("id", "CC-MAIN-2026-18"))
+            response = self._request(
+                self.http_get,
+                f"https://index.commoncrawl.org/{collection_id}-index",
+                params={"url": self.target, "output": "json", "limit": 10},
+            )
+            response.raise_for_status()
+            text = str(response.text)
+            records = parse_common_crawl_results(text)
+            return records or source_fallback("Common Crawl", "search", "web crawl index", 58)
+        except Exception:
+            return source_fallback("Common Crawl", "search", "web crawl index", 58)
+
+
+class GreenhouseJobsCollector(HTTPCollector):
+    def __init__(self, boards: list[str] | None = None) -> None:
+        super().__init__(name="Greenhouse Jobs", category="jobs")
+        self.boards = boards or ["databricks", "stripe"]
+
+    def collect(self) -> list[SignalRecord]:
+        records: list[SignalRecord] = []
+        for board in self.boards:
+            try:
+                data = self.get_json(f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs", content="true")
+                if isinstance(data, dict):
+                    records.extend(parse_greenhouse_jobs(data, board=board))
+            except Exception:
+                continue
+        return records or source_fallback("Greenhouse Jobs", "jobs", "greenhouse public jobs", 58)
+
+
+class LeverJobsCollector(HTTPCollector):
+    def __init__(self, companies: list[str] | None = None) -> None:
+        super().__init__(name="Lever Jobs", category="jobs")
+        self.companies = companies or ["spotify", "coupa", "Onehouse", "arcadia"]
+
+    def collect(self) -> list[SignalRecord]:
+        records: list[SignalRecord] = []
+        for company in self.companies:
+            try:
+                data = self.get_json(f"https://api.lever.co/v0/postings/{company}", mode="json")
+                if isinstance(data, (dict, list)):
+                    records.extend(parse_lever_jobs(data, company=company))
+            except Exception:
+                continue
+        return records or source_fallback("Lever Jobs", "jobs", "lever public jobs", 58)
+
+
+class GrantsGovCollector(HTTPCollector):
+    def __init__(self, keyword: str = "artificial intelligence", http_post: HttpPost = requests.post) -> None:
+        super().__init__(name="Grants.gov", category="finance")
+        self.keyword = keyword
+        self.http_post = http_post
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            response = self._post(
+                "https://api.grants.gov/v1/api/search2",
+                json={"keyword": self.keyword, "rows": 10, "oppStatuses": "forecasted|posted"},
+            )
+            response.raise_for_status()
+            records = parse_grantsgov_opportunities(response.json())
+            return records or source_fallback("Grants.gov", "finance", "grant opportunities", 62)
+        except Exception:
+            return source_fallback("Grants.gov", "finance", "grant opportunities", 62)
+
+
+class USASpendingCollector(HTTPCollector):
+    def __init__(self, keyword: str = "artificial intelligence", http_post: HttpPost = requests.post) -> None:
+        super().__init__(name="USAspending", category="finance")
+        self.keyword = keyword
+        self.http_post = http_post
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            response = self._post(
+                "https://api.usaspending.gov/api/v2/search/spending_by_award/",
+                json={
+                    "filters": {"keywords": [self.keyword], "award_type_codes": ["A", "B", "C", "D"]},
+                    "fields": ["Award ID", "Recipient Name", "Award Amount", "Awarding Agency"],
+                    "page": 1,
+                    "limit": 10,
+                    "sort": "Award Amount",
+                    "order": "desc",
+                },
+            )
+            response.raise_for_status()
+            records = parse_usaspending_awards(response.json())
+            return records or source_fallback("USAspending", "finance", "public spending awards", 62)
+        except Exception:
+            return source_fallback("USAspending", "finance", "public spending awards", 62)
+
+
+class DockerHubCollector(HTTPCollector):
+    def __init__(self, query: str = "ai agent") -> None:
+        super().__init__(name="Docker Hub", category="code")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://hub.docker.com/v2/search/repositories/", query=self.query, page_size=10)
+            records = parse_dockerhub_repositories(data if isinstance(data, dict) else {})
+            return records or source_fallback("Docker Hub", "code", "container image velocity", 58)
+        except Exception:
+            return source_fallback("Docker Hub", "code", "container image velocity", 58)
+
+
+class RubyGemsCollector(HTTPCollector):
+    def __init__(self, query: str = "ai") -> None:
+        super().__init__(name="RubyGems", category="code")
+        self.query = query
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://rubygems.org/api/v1/search.json", query=self.query)
+            records = parse_rubygems_results(data if isinstance(data, (dict, list)) else [])
+            return records or source_fallback("RubyGems", "code", "ruby package velocity", 58)
+        except Exception:
+            return source_fallback("RubyGems", "code", "ruby package velocity", 58)
+
+
+class FDroidCollector(HTTPCollector):
+    def __init__(self) -> None:
+        super().__init__(name="F-Droid", category="app_stores")
+
+    def collect(self) -> list[SignalRecord]:
+        try:
+            data = self.get_json("https://f-droid.org/repo/index-v2.json")
+            records = parse_fdroid_index(data if isinstance(data, dict) else {})
+            return records or source_fallback("F-Droid", "app_stores", "open source android apps", 56)
+        except Exception:
+            return source_fallback("F-Droid", "app_stores", "open source android apps", 56)
+
+
 class LibrariesIOCollector(HTTPCollector):
     def __init__(self, package: str = "streamlit", platform: str = "pypi", api_key: str | None = None) -> None:
         super().__init__(name="Libraries.io", category="code")
@@ -2284,15 +2840,25 @@ def default_collectors(use_live_network: bool = True) -> list[object]:
         HuggingFacePapersCollector(),
         ConferenceRSSCollector(),
         WikipediaPageviewsCollector(),
+        CrossrefCollector(),
+        EuropePMCCollector(),
+        PubMedCollector(),
+        BioRxivCollector("biorxiv"),
+        BioRxivCollector("medrxiv"),
         CoinGeckoCollector(),
         YahooFinanceCollector(),
         OpenCollectiveCollector(),
+        GrantsGovCollector(),
+        USASpendingCollector(),
         ITunesCollector(),
         GooglePlayCollector(),
         SteamCollector(),
+        FDroidCollector(),
         DuckDuckGoCollector(),
         WaybackCollector(),
+        CommonCrawlCollector(),
         GoogleTrendsCollector(),
+        GDELTCollector(),
         YCCompaniesCollector(),
         SECEdgarCollector(),
         PapersWithCodeCollector(),
@@ -2300,6 +2866,10 @@ def default_collectors(use_live_network: bool = True) -> list[object]:
         NPMRegistryCollector(),
         PackageCollector(),
         CratesIOCollector(),
+        DockerHubCollector(),
+        RubyGemsCollector(),
+        GreenhouseJobsCollector(),
+        LeverJobsCollector(),
         *_keyed_collectors_from_env(),
         SpecialIntelligenceCollector(),
     ]
