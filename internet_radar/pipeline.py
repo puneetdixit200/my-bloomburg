@@ -12,6 +12,9 @@ from internet_radar.storage.db import create_store
 from internet_radar.storage.models import BriefingPayload, SignalRecord
 
 
+DEFAULT_DASHBOARD_SIGNAL_LIMIT = 500
+
+
 def run_radar_once(
     collectors: list[object] | None = None,
     db_path: str | Path | None = None,
@@ -31,12 +34,12 @@ def run_radar_once(
     deduped = deduplicate_signals(signals)
     store = create_store(db_path or os.getenv("INTERNET_RADAR_DB", "data/radar.sqlite"))
     store.upsert_signals(deduped)
-    top_signals = store.list_signals(limit=100)
+    top_signals = store.list_signals(limit=_dashboard_signal_limit())
     router = LLMRouter()
     llm_choice = router.route("classify", content_length=120)
 
     return BriefingPayload(
-        active_sources=sum(1 for status in source_health.values() if status.startswith("ok")),
+        active_sources=sum(1 for status in source_health.values() if not status.startswith("error")),
         signals_24h=len(top_signals),
         top_signals=top_signals,
         source_health=source_health,
@@ -46,3 +49,10 @@ def run_radar_once(
         collection_duration_seconds=round(perf_counter() - started, 3),
         collection_mode="live" if use_live_network else "sample",
     )
+
+
+def _dashboard_signal_limit() -> int:
+    try:
+        return max(100, int(os.getenv("INTERNET_RADAR_DASHBOARD_SIGNAL_LIMIT", str(DEFAULT_DASHBOARD_SIGNAL_LIMIT))))
+    except ValueError:
+        return DEFAULT_DASHBOARD_SIGNAL_LIMIT

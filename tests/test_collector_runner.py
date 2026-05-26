@@ -39,7 +39,7 @@ def test_collector_runner_runs_sources_in_parallel_and_preserves_order():
     results = collect_from_sources([WaitingCollector("first"), WaitingCollector("second")], max_workers=2)
 
     assert [result.name for result in results] == ["first", "second"]
-    assert [result.status for result in results] == ["ok (1)", "ok (1)"]
+    assert [result.status for result in results] == ["live (1)", "live (1)"]
     assert [result.signals[0].source for result in results] == ["first", "second"]
 
 
@@ -71,6 +71,31 @@ def test_collector_runner_reports_errors_without_stopping_other_sources():
 
     results = collect_from_sources([GoodCollector(), BadCollector()], max_workers=2)
 
-    assert results[0].status == "ok (1)"
+    assert results[0].status == "live (1)"
     assert results[1].signals == []
     assert results[1].status == "error: temporary API outage"
+
+
+def test_collector_runner_marks_deterministic_fallback_results():
+    from internet_radar.collectors.runner import collect_from_sources
+
+    class FallbackCollector:
+        name = "Fallback Source"
+        category = "search"
+
+        def collect(self):
+            return [
+                SignalRecord(
+                    id="fallback:1",
+                    topic="web crawl index",
+                    title="Fallback signal",
+                    source=self.name,
+                    category="search",
+                    score=58,
+                    metadata={"fallback": True},
+                )
+            ]
+
+    results = collect_from_sources([FallbackCollector()], max_workers=1)
+
+    assert results[0].status == "fallback (1)"

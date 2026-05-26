@@ -87,8 +87,10 @@ def _source_category(source_name: str) -> str | None:
 
 
 def _status_mode(status: str) -> str:
-    if status.startswith("ok"):
-        return "live/fallback"
+    if status.startswith(("live", "ok")):
+        return "live"
+    if status.startswith("fallback"):
+        return "fallback"
     if status.startswith("error"):
         return "error"
     return "unknown"
@@ -96,10 +98,56 @@ def _status_mode(status: str) -> str:
 
 def _signal_preview_frame(signals: list[SignalRecord], limit: int = 10) -> pd.DataFrame:
     columns = ["score", "title", "source", "category", "url"]
-    frame = _signals_to_frame(signals)
+    frame = _signals_to_frame(_balanced_signals(signals, limit=limit, max_per_source=2))
     if frame.empty:
         return pd.DataFrame(columns=columns)
-    return frame.head(limit)[columns]
+    return frame[columns]
+
+
+def _signal_display_frame(signals: list[SignalRecord]) -> pd.DataFrame:
+    return _signals_to_frame(_balanced_signals(signals))
+
+
+def _balanced_signals(
+    signals: list[SignalRecord],
+    *,
+    limit: int | None = None,
+    max_per_source: int | None = None,
+) -> list[SignalRecord]:
+    buckets: dict[str, list[SignalRecord]] = {}
+    source_order: list[str] = []
+    for signal in signals:
+        if signal.source not in buckets:
+            buckets[signal.source] = []
+            source_order.append(signal.source)
+        buckets[signal.source].append(signal)
+
+    balanced: list[SignalRecord] = []
+    source_counts: dict[str, int] = {source: 0 for source in source_order}
+    cap_released = False
+    while any(buckets.values()):
+        added_this_round = False
+        for source in source_order:
+            if limit is not None and len(balanced) >= limit:
+                return balanced
+            if not buckets[source]:
+                continue
+            if max_per_source is not None and source_counts[source] >= max_per_source:
+                continue
+            balanced.append(buckets[source].pop(0))
+            source_counts[source] += 1
+            added_this_round = True
+        if not added_this_round:
+            if max_per_source is not None and not cap_released:
+                max_per_source = None
+                cap_released = True
+                continue
+            break
+    return balanced
+
+
+def _signal_table_column_config() -> dict[str, object]:
+    return {"url": st.column_config.LinkColumn("url", display_text="Open")}
 
 
 def _project_signals(signals: list[SignalRecord]) -> list[SignalRecord]:
@@ -380,7 +428,7 @@ def _render_signal_explorer(
         return
 
     st.subheader("Visible Data")
-    st.table(_signal_preview_frame(filtered))
+    st.dataframe(_signal_preview_frame(filtered), width="stretch", hide_index=True, column_config=_signal_table_column_config())
 
     chart_cols = st.columns(2)
     category_frame = _category_distribution_frame(filtered)
@@ -390,8 +438,8 @@ def _render_signal_explorer(
     if not source_frame.empty:
         chart_cols[1].bar_chart(source_frame, x="source", y="score")
 
-    frame = _signals_to_frame(filtered)
-    st.dataframe(frame, width="stretch", hide_index=True)
+    frame = _signal_display_frame(filtered)
+    st.dataframe(frame, width="stretch", hide_index=True, column_config=_signal_table_column_config())
     st.download_button(
         "Download CSV",
         frame.to_csv(index=False).encode("utf-8"),
@@ -450,8 +498,8 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
         st.subheader("Projects")
         if projects:
             project_frame = _projects_to_frame(projects)
-            st.table(project_frame.head(12))
-            st.dataframe(project_frame, width="stretch", hide_index=True)
+            st.dataframe(project_frame.head(12), width="stretch", hide_index=True, column_config=_signal_table_column_config())
+            st.dataframe(project_frame, width="stretch", hide_index=True, column_config=_signal_table_column_config())
             _render_project_details(projects)
         else:
             st.info("No project repository signals match the current filters. Clear the sidebar filters or enable live collection.")
@@ -550,7 +598,12 @@ def render_dashboard(payload: dict[str, dict[str, object]], filters: dict[str, A
         key="download-daily-report",
     )
     st.subheader("Top Signals Preview")
-    st.table(_signal_preview_frame(list(top.get("signals", []))))
+    st.dataframe(
+        _signal_preview_frame(list(top.get("signals", []))),
+        width="stretch",
+        hide_index=True,
+        column_config=_signal_table_column_config(),
+    )
     health_frame = _source_health_frame(top)
     if not health_frame.empty:
         with st.expander("Source Health", expanded=True):

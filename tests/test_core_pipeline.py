@@ -234,8 +234,54 @@ def test_pipeline_keeps_running_when_one_collector_fails(tmp_path):
     )
 
     assert result.signals_24h == 1
-    assert result.source_health["Good Collector"] == "ok (1)"
+    assert result.source_health["Good Collector"] == "live (1)"
     assert result.source_health["Bad Collector"] == "error: source down"
+
+
+def test_pipeline_keeps_lower_scored_category_signals_for_dashboard_tabs(tmp_path):
+    from internet_radar.pipeline import run_radar_once
+    from internet_radar.storage.models import SignalRecord
+
+    class CrowdedCodeCollector:
+        name = "Crowded Code"
+        category = "code"
+
+        def collect(self):
+            return [
+                SignalRecord(
+                    id=f"code:{index}",
+                    topic=f"code topic {index}",
+                    title=f"Code signal {index}",
+                    source=self.name,
+                    category=self.category,
+                    score=100,
+                )
+                for index in range(120)
+            ]
+
+    class HackathonCollector:
+        name = "Hackathon Source"
+        category = "hackathons"
+
+        def collect(self):
+            return [
+                SignalRecord(
+                    id="hackathon:1",
+                    topic="ai hackathon",
+                    title="AI hackathon",
+                    source=self.name,
+                    category=self.category,
+                    score=65,
+                )
+            ]
+
+    result = run_radar_once(
+        collectors=[CrowdedCodeCollector(), HackathonCollector()],
+        db_path=tmp_path / "radar.sqlite",
+        use_live_network=False,
+    )
+
+    assert any(signal.category == "hackathons" for signal in result.top_signals)
 
 
 def test_sample_collectors_parse_representative_payloads():

@@ -45,7 +45,7 @@ def _collect_one(collector: object) -> CollectorResult:
             name=name,
             category=category,
             signals=signals,
-            status=f"ok ({len(signals)})",
+            status=_status_for_signals(signals),
             duration_seconds=round(perf_counter() - started, 3),
         )
     except Exception as exc:
@@ -62,3 +62,16 @@ def _coerce_signals(raw_signals: Any) -> list[SignalRecord]:
     if raw_signals is None:
         return []
     return [signal for signal in list(raw_signals) if isinstance(signal, SignalRecord)]
+
+
+def _status_for_signals(signals: list[SignalRecord]) -> str:
+    mode = "fallback" if signals and all(_is_fallback_signal(signal) for signal in signals) else "live"
+    return f"{mode} ({len(signals)})"
+
+
+def _is_fallback_signal(signal: SignalRecord) -> bool:
+    return bool(
+        signal.metadata.get("fallback")
+        or signal.metadata.get("requires_api_key")
+        or str(signal.id or "").startswith(("source-fallback:", "keyed-fallback:"))
+    )

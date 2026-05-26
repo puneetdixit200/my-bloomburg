@@ -129,6 +129,38 @@ def test_dashboard_signal_preview_frame_is_static_and_limited():
     assert empty.empty
 
 
+def test_dashboard_signal_preview_balances_sources_and_exposes_clickable_url_config():
+    from dashboard.app import _signal_table_column_config, _signal_preview_frame
+    from internet_radar.storage.models import SignalRecord
+
+    signals = [
+        *[
+            SignalRecord(
+                id=f"crate-{index}",
+                topic=f"crate {index}",
+                title=f"crate {index}",
+                source="crates.io",
+                category="code",
+                url=f"https://crates.io/crates/crate-{index}",
+                score=100 - index,
+            )
+            for index in range(8)
+        ],
+        SignalRecord(id="gh", topic="mcp", title="MCP repo", source="GitHub Search", category="code", url="https://github.com/example/mcp", score=91),
+        SignalRecord(id="pypi", topic="agent", title="agent package", source="PyPI", category="code", url="https://pypi.org/project/agent/", score=90),
+        SignalRecord(id="news", topic="agents", title="Agent article", source="Dev.to", category="news", url="https://dev.to/example/agents", score=89),
+        SignalRecord(id="docker", topic="agent", title="agent image", source="Docker Hub", category="code", url="https://hub.docker.com/r/example/agent", score=88),
+    ]
+
+    frame = _signal_preview_frame(signals, limit=6)
+    column_config = _signal_table_column_config()
+
+    assert len(frame) == 6
+    assert list(frame["source"]).count("crates.io") <= 2
+    assert {"GitHub Search", "PyPI", "Dev.to"} <= set(frame["source"])
+    assert "url" in column_config
+
+
 def test_dashboard_report_and_source_health_frames():
     from dashboard.app import _build_markdown_report, _source_health_frame
     from internet_radar.dashboard_data import build_dashboard_payload
@@ -137,7 +169,7 @@ def test_dashboard_report_and_source_health_frames():
     payload = build_dashboard_payload(
         [SignalRecord(id="gh", topic="mcp", title="MCP repo spike", source="GitHub Search", category="code", score=91)],
         active_sources=1,
-        source_health={"GitHub Search": "ok (1)"},
+        source_health={"GitHub Search": "live (1)", "GDELT": "fallback (1)"},
         source_counts={"GitHub Search": 1},
         source_durations_seconds={"GitHub Search": 0.2},
         collection_mode="live",
@@ -148,8 +180,9 @@ def test_dashboard_report_and_source_health_frames():
 
     assert "Internet Radar Daily Report" in report
     assert "MCP repo spike" in report
-    assert health.iloc[0]["source"] == "GitHub Search"
-    assert health.iloc[0]["signals"] == 1
+    assert set(health["mode"]) == {"live", "fallback"}
+    assert "GitHub Search" in set(health["source"])
+    assert int(health.loc[health["source"] == "GitHub Search", "signals"].iloc[0]) == 1
 
 
 def test_dashboard_free_only_guardrails_show_paid_paths(monkeypatch):
