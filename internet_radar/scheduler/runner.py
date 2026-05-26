@@ -4,6 +4,7 @@ import argparse
 import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from typing import Sequence
 
@@ -15,7 +16,7 @@ from internet_radar.scheduler.jobs import ScheduledJob, build_job_plan, collect_
 
 
 Collector = Callable[[], int]
-JobRunner = Callable[[str], Any]
+JobRunner = Callable[[str], Any] | str
 
 
 def run_cycle(collector: Collector = collect_high_frequency) -> int:
@@ -30,8 +31,11 @@ def run_named_job(job_name: str, collector: Collector = collect_high_frequency) 
     return result.signals_24h
 
 
-def build_scheduler(job_runner: JobRunner | None = None) -> BlockingScheduler:
-    scheduler = BlockingScheduler(timezone=os.getenv("TZ", "UTC"))
+def build_scheduler(job_runner: JobRunner | None = None, jobstore_path: str | Path | None = None) -> BlockingScheduler:
+    scheduler = BlockingScheduler(
+        timezone=os.getenv("TZ", "UTC"),
+        jobstores=_persistent_jobstores(jobstore_path),
+    )
     runner = job_runner or run_named_job
     for job in build_job_plan().jobs:
         scheduler.add_job(
@@ -95,6 +99,14 @@ def _trigger_for_job(job: ScheduledJob) -> IntervalTrigger | CronTrigger:
             kwargs["day_of_week"] = job.day_of_week
         return CronTrigger(**kwargs)
     raise ValueError(f"Unsupported schedule for job {job.name}")
+
+
+def _persistent_jobstores(jobstore_path: str | Path | None = None) -> dict[str, object]:
+    from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+
+    path = Path(jobstore_path or os.getenv("INTERNET_RADAR_SCHEDULER_DB", "data/scheduler_jobs.sqlite"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return {"default": SQLAlchemyJobStore(url=f"sqlite:///{path}")}
 
 
 if __name__ == "__main__":

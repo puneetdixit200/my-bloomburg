@@ -9,6 +9,7 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "requests>=2.32",
+    "sqlalchemy>=2.0",
     "streamlit>=1.36",
 ]
 

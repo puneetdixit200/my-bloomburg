@@ -24,12 +24,25 @@ phrases:
   - no export
   - doesn't work
   - keeps breaking
+  - no api
+  - no integration
+  - privacy concerns
+  - too much setup
+  - onboarding is confusing
+  - locked in
+  - missing mobile
 weights:
   hate: 5
   broken: 4
   brittle: 4
   "why doesn't": 4
+  privacy: 4
+  "no api": 4
+  locked: 4
   expensive: 3
+  pricing: 3
+  integration: 3
+  onboarding: 3
   manual: 2
   slow: 2
 categories:
@@ -47,3 +60,23 @@ categories:
     - crash
     - broken
     - keeps breaking
+  privacy:
+    - privacy
+    - data leak
+    - tracking
+    - exposed
+  onboarding:
+    - confusing
+    - setup
+    - documentation
+    - too much setup
+  integration:
+    - no api
+    - webhook
+    - export
+    - integration
+  pricing:
+    - expensive
+    - pricing
+    - locked in
+    - subscription

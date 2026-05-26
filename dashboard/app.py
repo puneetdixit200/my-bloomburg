@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from internet_radar.alerts.dispatcher import alert_readiness
 from internet_radar.config.settings import load_user_profile
 from internet_radar.dashboard_data import PAGE_DEFINITIONS, build_dashboard_payload
 from internet_radar.pipeline import run_radar_once
@@ -75,6 +76,15 @@ def _free_only_guardrails_frame(free_only: bool | None = None) -> pd.DataFrame:
             {"integration": "Brave Search API", "surface": "collector", "status": status, "reason": reason},
             {"integration": "Crunchbase API", "surface": "collector", "status": status, "reason": reason},
             {"integration": "Mailgun Email", "surface": "alerts", "status": status, "reason": reason},
+        ]
+    )
+
+
+def _alert_readiness_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"channel": item.channel, "ready": item.ready, "detail": item.detail}
+            for item in alert_readiness()
         ]
     )
 
@@ -281,6 +291,8 @@ def _objects_to_frame(items: list[object]) -> pd.DataFrame:
     for item in items:
         if is_dataclass(item):
             rows.append(asdict(item))
+        elif hasattr(item, "model_dump"):
+            rows.append(item.model_dump(mode="json"))
         else:
             rows.append(getattr(item, "__dict__", {}))
     return pd.DataFrame(rows)
@@ -464,6 +476,8 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
         columns[0].metric("Skills", len(profile.get("skills", [])))
         columns[1].metric("Interests", len(profile.get("interests", [])))
         columns[2].metric("Alert threshold", int(profile.get("alert_threshold", 0)))
+        st.subheader("Alert Readiness")
+        st.dataframe(_alert_readiness_frame(), width="stretch", hide_index=True)
         st.json(profile)
         personalized = list(page_payload.get("personalized_signals", []))
         if personalized:
@@ -476,6 +490,9 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
         st.json(page_payload.get("query_analysis", {}))
 
     if page_key == "briefing":
+        analysis_artifacts = page_payload.get("analysis_artifacts", {})
+        if isinstance(analysis_artifacts, dict) and analysis_artifacts:
+            st.caption(f"Pipeline analysis: {analysis_artifacts.get('analysis_route', page_payload.get('llm_status', 'unknown'))}")
         signal_summary = page_payload.get("signal_summary")
         if signal_summary:
             st.subheader("Signal Summary")
@@ -511,6 +528,10 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
             st.dataframe(_skill_recommendations_to_frame(recommendations), width="stretch", hide_index=True)
 
     if page_key == "trend_velocity":
+        historical = list(page_payload.get("historical_trends", []))
+        if historical:
+            st.subheader("Historical Velocity")
+            st.dataframe(_objects_to_frame(historical), width="stretch", hide_index=True)
         agreements = list(page_payload.get("source_agreements", []))
         if agreements:
             st.subheader("Source Agreement")
@@ -669,6 +690,8 @@ def _payload_from_briefing(briefing: BriefingPayload) -> dict[str, dict[str, obj
         source_health=briefing.source_health,
         source_counts=briefing.source_counts,
         source_durations_seconds=briefing.source_durations_seconds,
+        historical_trends=briefing.historical_trends,
+        analysis_artifacts=briefing.analysis_artifacts,
     )
 
 

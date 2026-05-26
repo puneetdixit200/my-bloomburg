@@ -24,6 +24,43 @@ class AlertDispatchResult:
     detail: str
 
 
+@dataclass(frozen=True)
+class AlertChannelReadiness:
+    channel: str
+    ready: bool
+    detail: str
+
+
+def alert_readiness(config: dict[str, str] | None = None) -> list[AlertChannelReadiness]:
+    resolved = _config(config or {})
+    free_only = os.getenv("INTERNET_RADAR_FREE_ONLY", "0") == "1"
+    return [
+        AlertChannelReadiness(
+            channel="ntfy",
+            ready=bool(resolved.get("ntfy_topic")),
+            detail="ready" if resolved.get("ntfy_topic") else "missing INTERNET_RADAR_NTFY_TOPIC",
+        ),
+        AlertChannelReadiness(
+            channel="telegram",
+            ready=bool(resolved.get("telegram_bot_token") and resolved.get("telegram_chat_id")),
+            detail="ready"
+            if resolved.get("telegram_bot_token") and resolved.get("telegram_chat_id")
+            else "missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID",
+        ),
+        AlertChannelReadiness(
+            channel="discord",
+            ready=bool(resolved.get("discord_webhook_url")),
+            detail="ready" if resolved.get("discord_webhook_url") else "missing DISCORD_WEBHOOK_URL",
+        ),
+        AlertChannelReadiness(
+            channel="email",
+            ready=not free_only
+            and all(resolved.get(key) for key in ["mailgun_domain", "mailgun_api_key", "email_to", "email_from"]),
+            detail=_email_readiness_detail(resolved, free_only),
+        ),
+    ]
+
+
 def dispatch_alert(
     alert: AlertMessage,
     config: dict[str, str] | None = None,
@@ -102,3 +139,14 @@ def _config(overrides: dict[str, str]) -> dict[str, str]:
         "email_from": os.getenv("INTERNET_RADAR_EMAIL_FROM", ""),
     }
     return {**env, **overrides}
+
+
+def _email_readiness_detail(config: dict[str, str], free_only: bool) -> str:
+    if free_only:
+        return "disabled by free-only mode"
+    missing = [
+        key
+        for key in ["mailgun_domain", "mailgun_api_key", "email_to", "email_from"]
+        if not config.get(key)
+    ]
+    return "ready" if not missing else f"missing {', '.join(missing)}"

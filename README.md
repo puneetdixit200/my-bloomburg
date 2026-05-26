@@ -4,24 +4,24 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 
 ## What Works
 
-- 64+ source registry covering code, social, news, jobs, hackathons, research, finance, search, and app stores.
+- 80-source registry covering code, social, news, jobs, hackathons, research, finance, search, and app stores.
 - Live no-key collector layer for every enabled public registry source, including GitHub Search/Trending, GitLab, MCP Servers Directory, PyPI, npm, crates.io, HN Algolia, Reddit JSON, Bluesky, Mastodon, Stack Overflow, Dev.to, Tech RSS, Hashnode, TLDR, Lobsters, Indie Hackers, RemoteOK, The Muse, Arbeitnow, YC Jobs, Devpost, MLH, LeetCode Contests, arXiv, OpenAlex, Hugging Face, Wikipedia Pageviews, DuckDuckGo, Wayback Machine, Google Trends, YC Companies, SEC EDGAR, Papers With Code, OpenCollective, CoinGecko, Yahoo Finance, iTunes, Google Play, and Steam.
-- Credential-aware optional collectors for Libraries.io, Product Hunt, Adzuna, HackerEarth, Semantic Scholar, Crunchbase, Brave Search, and Tavily.
+- Credential-aware optional collectors for Reddit API, Libraries.io, Product Hunt, Adzuna, HackerEarth, Semantic Scholar, Crunchbase, Brave Search, and Tavily.
 - Parallel collector runner with per-source health reporting so one failing source does not stop the pipeline.
 - Collector utilities for per-source rate limiting, TTL request caching, optional proxy rotation, and HTML cleanup for scraper-style sources.
 - Deterministic sample fallback so the app runs without API keys or network.
-- SQLite persistence in `data/radar.sqlite`.
+- SQLite persistence in `data/radar.sqlite`, including `signal_snapshots` history for per-run metric tracking.
 - Cross-source validation, deduplication, scoring, and local-first LLM routing.
 - Cross-source agreement matrix with architecture multipliers for weak, strong, and act-now signals.
 - Dedicated research and funding scorers for academic momentum and market-validation signals.
 - Space-conscious local embeddings, optional ChromaDB vector persistence, Ollama/Cohere embedding routing, vector search, and semantic clusters for related signals.
 - Deterministic sentiment/frustration scoring and startup gap clustering for pain-heavy social and app-store signals.
 - Profile-aware relevance scoring from `config/interests.yaml`, including skills, interests, goals, blocked topics, alert threshold, and suggested Radar Search queries.
-- Local-first LLM routing with Groq, Gemini, and OpenRouter online free-tier choices for heavy, huge-context, and overflow analysis, plus Radar Search deep-dive summaries.
+- Local-first LLM routing with Groq, Gemini, and OpenRouter online free-tier choices for heavy, huge-context, and overflow analysis, plus pipeline-stored briefing, gap, trend, idea, and Radar Search deep-dive summaries.
 - Architecture-style alert templates for hackathons, startup gaps, research signals, funding signals, and skill radar items, filtered by profile threshold and notification channels.
-- Multi-channel alert dispatch adapters for ntfy, Telegram, Discord, and Mailgun email, with credential-free dry-run coverage in tests.
+- Multi-channel alert dispatch adapters for ntfy, Telegram, Discord, and Mailgun email, with alert-readiness reporting and credential-free dry-run coverage in tests.
 - Architecture-style daily briefing and skill learning recommendations derived from job, code, and research momentum.
-- APScheduler-backed job catalog for the architecture cadence map, with named jobs wired to source-specific collectors/actions plus smart triggers for high scores, 3-source topic spikes, and hackathon crowd jumps.
+- APScheduler-backed job catalog for the architecture cadence map, with a persistent SQLite job store, named jobs wired to source-specific collectors/actions, and smart triggers for high scores, 3-source topic spikes, and hackathon crowd jumps.
 - Scheduler priority queue so immediate alerts, deep analysis, and crowd warnings run before routine cadence jobs.
 - Special intelligence modules for abandoned-tool opportunities, conference topic radar, salary velocity, and early wave prediction.
 - Ollama integration with installed local models such as `qwen2.5:0.5b`; rule fallback when Ollama is unavailable.
@@ -54,9 +54,12 @@ SQLite is the default storage backend:
 ```bash
 export INTERNET_RADAR_STORAGE_BACKEND=sqlite
 export INTERNET_RADAR_DB=data/radar.sqlite
+export INTERNET_RADAR_SCHEDULER_DB=data/scheduler_jobs.sqlite
 export INTERNET_RADAR_PAYLOAD_CACHE=data/latest_payload.json
 export INTERNET_RADAR_BACKGROUND_REFRESH_SECONDS=3600
 ```
+
+The app deliberately keeps analytics in SQLite instead of DuckDB to stay lightweight on disk. `signals` stores the latest known state; `signal_snapshots` stores per-run metric history such as score, velocity, stars, downloads, citations, amount, and participants.
 
 Supabase is ready through REST keys:
 
@@ -95,6 +98,8 @@ export INTERNET_RADAR_EMAIL_TO=you@example.com
 export INTERNET_RADAR_EMAIL_FROM=radar@example.com
 ```
 
+With `INTERNET_RADAR_FREE_ONLY=1`, Mailgun email remains disabled even if old Mailgun values are present. The Profile page shows alert readiness for ntfy, Telegram, Discord, and email.
+
 ## Run Tests
 
 ```bash
@@ -115,6 +120,7 @@ The architecture-compatible root commands also work from the repo checkout:
 python scheduler/runner.py
 python scheduler/runner.py --once
 python scheduler/runner.py --loop
+python run_scheduler.py
 python alerts/telegram_bot.py
 ```
 

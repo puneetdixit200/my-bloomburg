@@ -1738,6 +1738,48 @@ class RedditJSONCollector(HTTPCollector):
             return sample_signals("social")
 
 
+class RedditAPICollector(HTTPCollector):
+    def __init__(
+        self,
+        subreddit: str = "LocalLLaMA",
+        client_id: str | None = None,
+        client_secret: str | None = None,
+    ) -> None:
+        super().__init__(name="Reddit API", category="social")
+        self.subreddit = subreddit
+        self.client_id = client_id or os.getenv("REDDIT_CLIENT_ID", "")
+        self.client_secret = client_secret or os.getenv("REDDIT_CLIENT_SECRET", "")
+
+    def collect(self) -> list[SignalRecord]:
+        if not self.client_id or not self.client_secret:
+            return keyed_source_fallback("Reddit API", "social", "reddit developer discussion", 58)
+        try:
+            token_response = self._post(
+                "https://www.reddit.com/api/v1/access_token",
+                data={"grant_type": "client_credentials"},
+                auth=(self.client_id, self.client_secret),
+            )
+            token_response.raise_for_status()
+            token = str(token_response.json().get("access_token", ""))
+            if not token:
+                return keyed_source_fallback("Reddit API", "social", "reddit developer discussion", 58)
+            response = self._request(
+                self.http_get,
+                f"https://oauth.reddit.com/r/{self.subreddit}/hot",
+                params={"limit": 8},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            response.raise_for_status()
+            children = response.json().get("data", {}).get("children", [])
+            records = parse_reddit_children(list(children))
+            for record in records:
+                record.source = "Reddit API"
+                record.id = f"reddit-api:{record.id}"
+            return records or source_fallback("Reddit API", "social", "reddit developer discussion", 58)
+        except Exception:
+            return source_fallback("Reddit API", "social", "reddit developer discussion", 58)
+
+
 class DevToCollector(HTTPCollector):
     def __init__(self) -> None:
         super().__init__(name="Dev.to", category="news")
@@ -2938,6 +2980,8 @@ def keyed_source_fallback(name: str, category: str, topic: str, score: int) -> l
 def _keyed_collectors_from_env() -> list[object]:
     collectors: list[object] = []
     free_only = os.getenv("INTERNET_RADAR_FREE_ONLY", "0") == "1"
+    if os.getenv("REDDIT_CLIENT_ID") and os.getenv("REDDIT_CLIENT_SECRET"):
+        collectors.append(RedditAPICollector())
     if os.getenv("LIBRARIES_IO_API_KEY"):
         collectors.append(LibrariesIOCollector())
     if os.getenv("PRODUCTHUNT_TOKEN"):

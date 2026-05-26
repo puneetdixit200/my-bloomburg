@@ -27,7 +27,7 @@ from internet_radar.signals.funding_signal import build_funding_signals
 from internet_radar.signals.gap_finder import find_startup_gaps
 from internet_radar.signals.sentiment_pipeline import enrich_signals_with_sentiment, summarize_sentiment
 from internet_radar.signals.trend_correlator import correlate_trends
-from internet_radar.storage.models import PageDefinition, SignalRecord, UserProfile
+from internet_radar.storage.models import HistoricalTrend, PageDefinition, SignalRecord, UserProfile
 from internet_radar.storage.vector_store import build_semantic_clusters
 
 
@@ -60,6 +60,8 @@ def build_dashboard_payload(
     source_health: dict[str, str] | None = None,
     source_counts: dict[str, int] | None = None,
     source_durations_seconds: dict[str, float] | None = None,
+    historical_trends: list[HistoricalTrend] | None = None,
+    analysis_artifacts: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     by_category: dict[str, list[SignalRecord]] = defaultdict(list)
     profile = profile or UserProfile()
@@ -100,6 +102,8 @@ def build_dashboard_payload(
     )
     daily_briefing = write_daily_briefing(all_signals, active_sources=active_sources, llm_status=llm_status)
     skill_recommendations = recommend_skills(all_signals, profile=profile)
+    historical_trends = historical_trends or []
+    analysis_artifacts = analysis_artifacts or {}
     collection = {
         "generated_at": generated_at,
         "duration_seconds": collection_duration_seconds,
@@ -130,6 +134,8 @@ def build_dashboard_payload(
             "source_health": source_health or {},
             "source_counts": source_counts or {},
             "source_durations_seconds": source_durations_seconds or {},
+            "historical_trends": historical_trends,
+            "analysis_artifacts": analysis_artifacts,
             "personalized_signals": personalized_signals,
             "alerts": alerts,
             "daily_briefing": daily_briefing,

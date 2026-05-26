@@ -4,18 +4,32 @@ profile:
     - ai
     - streamlit
     - automation
+    - github
+    - data analysis
+    - sql
+    - llm apps
+    - web scraping
+    - dashboard design
   interests:
     - browser agents
     - local llm
     - mcp
     - internships
     - hackathons
+    - ai developer tools
+    - data apps
+    - open source projects
+    - startup gaps
+    - student productivity
   goals:
     - learn high-demand skills early
     - find internships with low competition
     - spot startup gaps from user pain
+    - build portfolio projects with live public data
+    - discover hackathons before they get crowded
+    - track tools that can become useful products
   blocked_topics: []
-  alert_threshold: 80
+  alert_threshold: 70
   notification_channels:
     - ntfy
   llm_preference: auto

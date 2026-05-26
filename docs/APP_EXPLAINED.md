@@ -12,6 +12,8 @@ Public sources
   -> SignalRecord objects
   -> deduplication
   -> SQLite storage
+  -> signal_snapshots history
+  -> pipeline analysis artifacts
   -> latest payload cache
   -> dashboard payload builder
   -> Streamlit pages and tables
@@ -27,8 +29,8 @@ The important files are:
 | Live collectors | `internet_radar/collectors/live.py` | Public/API collectors and source-specific parsing formulas. |
 | Collector runner | `internet_radar/collectors/runner.py` | Runs collectors in parallel and marks sources as live, fallback, or error. |
 | Source registry | `internet_radar/sources/registry.py` | Master source list, category, auth requirement, default enabled flag. |
-| Models | `internet_radar/storage/models.py` | Core Pydantic models like `SignalRecord`, `SourceDefinition`, `BriefingPayload`. |
-| SQLite store | `internet_radar/storage/db.py` | Saves and reads signals from `data/radar.sqlite`. |
+| Models | `internet_radar/storage/models.py` | Core Pydantic models like `SignalRecord`, `SignalSnapshot`, `HistoricalTrend`, `SourceDefinition`, `BriefingPayload`. |
+| SQLite store | `internet_radar/storage/db.py` | Saves latest signals and per-run metric snapshots from `data/radar.sqlite`. |
 | Payload cache | `internet_radar/storage/payload_cache.py` | Saves latest successful dashboard payload to `data/latest_payload.json`. |
 | Scorers | `internet_radar/scoring/*.py` | Domain-specific formulas for trends, gaps, research, funding, jobs, hackathons. |
 | Signal analysis | `internet_radar/signals/*.py` | Deduplication, sentiment, startup gaps, semantic clusters, cross-source agreement. |
@@ -55,6 +57,12 @@ Run one collection from the CLI:
 ```bash
 uv run internet-radar-run --db data/radar.sqlite
 uv run internet-radar-run --live --db data/radar.sqlite
+```
+
+Run the real scheduler entrypoint:
+
+```bash
+python run_scheduler.py
 ```
 
 Run tests:
@@ -96,6 +104,8 @@ The dashboard Source Health table shows this as `live`, `fallback`, or `error`.
 | Mailgun Email | Disabled |
 
 Free keyed APIs can still run when keys exist, but paid integrations stay off.
+
+Credentialed Reddit OAuth is optional. If `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` are present, the app adds the `Reddit API` collector. If those values are empty, the no-key `Reddit JSON` collector still runs or falls back.
 
 ## Source Registry
 
@@ -568,6 +578,78 @@ trend_score
 ```
 
 These are shown as `domain_score` in tables and used by page-specific views.
+
+## Historical Velocity
+
+Every pipeline run writes numeric metrics to SQLite:
+
+```text
+signal_snapshots
+  run_id
+  signal_id
+  topic/title/source/category
+  metric
+  value
+  observed_at
+```
+
+The snapshot writer stores:
+
+```text
+score
+velocity
+numeric metadata fields such as stars, downloads, recent_downloads,
+views, citations, amount, participants, result_count, pull_count
+```
+
+The historical velocity engine picks the best available metric for each signal. It prefers direct demand metrics before raw score:
+
+```text
+stars
+recent_downloads
+downloads
+pull_count
+views
+citations
+result_count
+participants
+current_participants
+amount
+score
+velocity
+```
+
+For a current value and older baselines:
+
+```text
+delta_3d = current_value - value_3d_ago
+delta_7d = current_value - value_7d_ago
+
+acceleration_3d_per_day = delta_3d / 3
+acceleration_7d_per_day = delta_7d / 7
+
+velocity_score = clamp(((current_value - value_3d_ago) / value_3d_ago) * 100, 0, 100)
+```
+
+Direction:
+
+```text
+current > baseline -> up
+current < baseline -> down
+equal              -> flat
+no baseline        -> new
+```
+
+Confidence:
+
+```text
+3-day and 7-day baselines -> 90
+3-day baseline only       -> 70
+previous run only         -> 55
+new signal                -> 35
+```
+
+The Trend Velocity page shows the resulting `HistoricalTrend` rows in a Historical Velocity table.
 
 ## Trend Score
 
@@ -1213,6 +1295,20 @@ hackathon participant growth >= 50 -> crowd alert
 same topic from 3+ sources in 1 hour -> deep analysis
 ```
 
+The runnable entrypoint is:
+
+```bash
+python run_scheduler.py
+```
+
+It builds an APScheduler `BlockingScheduler` with a persistent SQLite job store:
+
+```text
+INTERNET_RADAR_SCHEDULER_DB=data/scheduler_jobs.sqlite
+```
+
+This lets job definitions survive process restarts without adding a heavier analytics database. DuckDB is intentionally not part of the runtime; SQLite remains the source of truth for both current signals and historical snapshots to keep disk usage low.
+
 ## Alert Dispatch
 
 Supported channels:
@@ -1225,6 +1321,15 @@ email via Mailgun
 ```
 
 In free-only mode, Mailgun credentials are blanked out so email dispatch stays disabled.
+
+Alert readiness is also exposed:
+
+```text
+ntfy      -> ready when INTERNET_RADAR_NTFY_TOPIC is set
+telegram  -> ready when TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set
+discord   -> ready when DISCORD_WEBHOOK_URL is set
+email     -> disabled by free-only mode, otherwise requires Mailgun and email addresses
+```
 
 ## Why Some Tabs Can Look Empty
 

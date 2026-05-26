@@ -51,13 +51,17 @@ def test_storage_migrations_record_schema_versions(tmp_path):
 
     store = RadarStore(tmp_path / "radar.sqlite")
 
-    assert store.schema_versions() == ["001_initial"]
+    assert store.schema_versions() == ["001_initial", "002_signal_snapshots"]
     with sqlite3.connect(store.db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         indexes = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
 
-    assert {"signals", "schema_migrations"} <= tables
-    assert {"idx_signals_category", "idx_signals_score"} <= indexes
+    assert {"signals", "signal_snapshots", "schema_migrations"} <= tables
+    assert {
+        "idx_signals_category",
+        "idx_signals_score",
+        "idx_signal_snapshots_signal_metric_time",
+    } <= indexes
 
 
 def test_supabase_store_upserts_and_lists_via_rest_without_client_dependency():

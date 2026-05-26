@@ -66,6 +66,41 @@ class SignalRecord(BaseModel):
         return data
 
 
+class SignalSnapshot(BaseModel):
+    id: int | None = None
+    run_id: str
+    signal_id: str
+    topic: str
+    title: str
+    source: str
+    category: Category
+    metric: str
+    value: float
+    observed_at: datetime
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class HistoricalTrend(BaseModel):
+    signal_id: str
+    topic: str
+    title: str
+    source: str
+    category: Category
+    metric: str
+    current_value: float
+    previous_value: float | None = None
+    value_3d_ago: float | None = None
+    value_7d_ago: float | None = None
+    delta_3d: float | None = None
+    delta_7d: float | None = None
+    acceleration_3d_per_day: float | None = None
+    acceleration_7d_per_day: float | None = None
+    direction: Literal["up", "down", "flat", "new"]
+    velocity_score: int = Field(default=0, ge=0, le=100)
+    confidence: int = Field(default=0, ge=0, le=100)
+    observed_at: datetime
+
+
 class ValidationResult(BaseModel):
     topic: str
     confidence: int
@@ -82,6 +117,8 @@ class BriefingPayload(BaseModel):
     source_health: dict[str, str] = Field(default_factory=dict)
     source_counts: dict[str, int] = Field(default_factory=dict)
     source_durations_seconds: dict[str, float] = Field(default_factory=dict)
+    historical_trends: list[HistoricalTrend] = Field(default_factory=list)
+    analysis_artifacts: dict[str, Any] = Field(default_factory=dict)
     llm_status: str = "deterministic fallback"
     collection_duration_seconds: float = 0.0
     collection_mode: Literal["live", "sample"] = "sample"
