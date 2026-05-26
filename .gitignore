@@ -2,7 +2,8 @@
 .pytest_cache/
 __pycache__/
 *.pyc
-.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 .env
 data/*.sqlite
 data/*.db

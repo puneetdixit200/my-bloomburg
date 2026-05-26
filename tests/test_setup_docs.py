@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tomllib
 
 import yaml
 
@@ -32,3 +33,13 @@ def test_vector_requirements_file_exists_for_non_uv_installs():
 
     assert "chromadb" in content
     assert "protobuf>=3.20,<4" in content
+
+
+def test_streamlit_app_uses_dark_theme_globally():
+    config = tomllib.loads(Path(".streamlit/config.toml").read_text())
+    theme = config["theme"]
+
+    assert theme["base"] == "dark"
+    assert theme["backgroundColor"].startswith("#")
+    assert theme["secondaryBackgroundColor"].startswith("#")
+    assert theme["textColor"].startswith("#")
