@@ -25,11 +25,10 @@ def summarize_signals(
     route = router.route("summarize", _content_length(query, signals))
     top_signals = sorted(signals, key=lambda signal: signal.score, reverse=True)
     top_sources = _ordered_sources(top_signals)
-    top_score = top_signals[0].score if top_signals else 0
     categories = sorted({signal.category for signal in signals})
     headline = (
         f"{query} has {len(signals)} signals across {len(top_sources)} sources"
-        f" with top score {top_score}."
+        f" covering {len(categories)} categories."
     )
     key_points = _key_points(top_signals, categories)
     next_action = (
@@ -51,7 +50,7 @@ def _key_points(signals: list[SignalRecord], categories: list[str]) -> list[str]
     if not signals:
         return ["No signals collected yet."]
     points = [
-        f"Top signal: {signals[0].title} from {signals[0].source} scored {signals[0].score}/100.",
+        f"Top signal: {signals[0].title} from {signals[0].source}.",
         f"Coverage: {', '.join(categories) if categories else 'none'}.",
     ]
     painful = [signal for signal in signals if _as_int(signal.metadata.get("frustration_score")) >= 45]

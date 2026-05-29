@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from internet_radar.brain.embed_engine import DeterministicEmbedder, EmbeddingRouter, cosine_similarity
+from internet_radar.brain.embed_engine import DeterministicEmbedder, EmbeddingRouter, GeminiEmbedder, cosine_similarity
 from internet_radar.storage.models import SignalRecord
 
 
@@ -103,12 +103,14 @@ def create_vector_store(backend: str | None = None, **kwargs: Any) -> SemanticVe
     selected = (backend or os.getenv("INTERNET_RADAR_VECTOR_BACKEND", "auto")).strip().lower()
     if selected == "deterministic":
         return SemanticVectorStore(**kwargs)
+    if selected == "gemini":
+        return SemanticVectorStore(embedder=GeminiEmbedder(), **kwargs)
     if selected in {"chroma", "chromadb"}:
         return ChromaSemanticVectorStore(**kwargs)
     try:
         return ChromaSemanticVectorStore(**kwargs)
     except RuntimeError:
-        return SemanticVectorStore(**kwargs)
+        return SemanticVectorStore(embedder=EmbeddingRouter().embedder(), **kwargs)
 
 
 def build_semantic_clusters(signals: list[SignalRecord], min_cluster_size: int = 2) -> list[SemanticCluster]:

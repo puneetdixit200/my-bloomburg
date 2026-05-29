@@ -104,6 +104,13 @@ def build_dashboard_payload(
     skill_recommendations = recommend_skills(all_signals, profile=profile)
     historical_trends = historical_trends or []
     analysis_artifacts = analysis_artifacts or {}
+    signal_summary = _artifact_value(analysis_artifacts, "signal_summary", signal_summary)
+    classifications = _artifact_value(analysis_artifacts, "classifications", classifications)
+    gap_analyses = _artifact_value(analysis_artifacts, "gap_analyses", gap_analyses)
+    trend_predictions = _artifact_value(analysis_artifacts, "trend_predictions", trend_predictions)
+    idea_validations = _artifact_value(analysis_artifacts, "idea_validations", idea_validations)
+    daily_briefing = _artifact_value(analysis_artifacts, "daily_briefing", daily_briefing)
+    llm_generated_insight = _artifact_value(analysis_artifacts, "llm_generated_insight", {})
     collection = {
         "generated_at": generated_at,
         "duration_seconds": collection_duration_seconds,
@@ -139,6 +146,7 @@ def build_dashboard_payload(
             "personalized_signals": personalized_signals,
             "alerts": alerts,
             "daily_briefing": daily_briefing,
+            "llm_generated_insight": llm_generated_insight,
             "gap_clusters": gap_clusters,
             "pain_clusters": gap_clusters,
             "semantic_clusters": semantic_clusters,
@@ -159,6 +167,10 @@ def build_dashboard_payload(
             "query_analysis": query_analysis,
         }
     return payload
+
+
+def _artifact_value(analysis_artifacts: dict[str, Any], key: str, fallback: Any) -> Any:
+    return analysis_artifacts[key] if key in analysis_artifacts else fallback
 
 
 def enrich_domain_scores(signals: list[SignalRecord], profile: UserProfile | None = None) -> None:

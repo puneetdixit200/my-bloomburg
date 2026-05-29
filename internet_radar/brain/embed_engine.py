@@ -84,6 +84,36 @@ class CohereEmbedder:
         return _normalize([float(value) for value in embeddings[0]])
 
 
+class GeminiEmbedder:
+    def __init__(
+        self,
+        model: str = "gemini-embedding-2",
+        api_key: str | None = None,
+        timeout: float = 10.0,
+        http_post: HttpPost = requests.post,
+    ) -> None:
+        self.model = model
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self.timeout = timeout
+        self.http_post = http_post
+
+    def embed(self, text: str) -> list[float]:
+        if not self.api_key:
+            return []
+        response = self.http_post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:embedContent",
+            headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+            json={
+                "model": f"models/{self.model}",
+                "content": {"parts": [{"text": text[:8000]}]},
+                "output_dimensionality": 768,
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return _normalize(_embedding_values(response.json()))
+
+
 class EmbeddingRouter:
     def __init__(
         self,
@@ -104,14 +134,18 @@ class EmbeddingRouter:
     def route(self) -> EmbeddingChoice:
         if "nomic-embed-text" in self.available_models:
             return EmbeddingChoice(provider="ollama", model="nomic-embed-text", reason="local embedding model")
+        if os.getenv("GEMINI_API_KEY", ""):
+            return EmbeddingChoice(provider="gemini", model="gemini-embedding-2", reason="Gemini embedding free-tier key")
         if self.cohere_api_key:
             return EmbeddingChoice(provider="cohere", model="embed-english-light-v3.0", reason="online free-tier embedding fallback")
         return EmbeddingChoice(provider="deterministic", model="hashed-bow", reason="space-conscious local fallback")
 
-    def embedder(self) -> DeterministicEmbedder | OllamaEmbedder | CohereEmbedder:
+    def embedder(self) -> DeterministicEmbedder | OllamaEmbedder | CohereEmbedder | GeminiEmbedder:
         choice = self.route()
         if choice.provider == "ollama":
             return OllamaEmbedder(model=choice.model)
+        if choice.provider == "gemini":
+            return GeminiEmbedder(model=choice.model)
         if choice.provider == "cohere":
             return CohereEmbedder(model=choice.model, api_key=self.cohere_api_key)
         return DeterministicEmbedder()
@@ -140,3 +174,15 @@ def _normalize(vector: list[float]) -> list[float]:
     if not magnitude:
         return vector
     return [value / magnitude for value in vector]
+
+
+def _embedding_values(payload: dict[str, Any]) -> list[float]:
+    embedding = payload.get("embedding")
+    if isinstance(embedding, dict) and isinstance(embedding.get("values"), list):
+        return [float(value) for value in embedding["values"]]
+    embeddings = payload.get("embeddings")
+    if isinstance(embeddings, list) and embeddings:
+        first = embeddings[0]
+        if isinstance(first, dict) and isinstance(first.get("values"), list):
+            return [float(value) for value in first["values"]]
+    return []

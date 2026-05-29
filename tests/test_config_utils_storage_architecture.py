@@ -51,16 +51,23 @@ def test_storage_migrations_record_schema_versions(tmp_path):
 
     store = RadarStore(tmp_path / "radar.sqlite")
 
-    assert store.schema_versions() == ["001_initial", "002_signal_snapshots"]
+    assert store.schema_versions() == [
+        "001_initial",
+        "002_signal_snapshots",
+        "003_alert_outbox",
+        "004_scheduler_heartbeats",
+    ]
     with sqlite3.connect(store.db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         indexes = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
 
-    assert {"signals", "signal_snapshots", "schema_migrations"} <= tables
+    assert {"signals", "signal_snapshots", "alert_outbox", "scheduler_heartbeats", "schema_migrations"} <= tables
     assert {
         "idx_signals_category",
         "idx_signals_score",
         "idx_signal_snapshots_signal_metric_time",
+        "idx_alert_outbox_status_updated",
+        "idx_scheduler_heartbeats_recorded_at",
     } <= indexes
 
 

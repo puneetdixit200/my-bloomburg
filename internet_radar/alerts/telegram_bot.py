@@ -16,6 +16,7 @@ from internet_radar.storage.models import SignalRecord, UserProfile
 
 
 HttpPost = Callable[..., Any]
+HttpGet = Callable[..., Any]
 DEFAULT_DB_PATH = "data/radar.sqlite"
 
 if TYPE_CHECKING:
@@ -29,12 +30,129 @@ def send_telegram(
     http_post: HttpPost = requests.post,
     timeout: float = 5.0,
 ) -> bool:
+    sent, _detail = send_telegram_with_detail(
+        message,
+        bot_token=bot_token,
+        chat_id=chat_id,
+        http_post=http_post,
+        timeout=timeout,
+    )
+    return sent
+
+
+def send_telegram_with_detail(
+    message: str,
+    bot_token: str,
+    chat_id: str,
+    http_post: HttpPost = requests.post,
+    timeout: float = 5.0,
+) -> tuple[bool, str]:
     response = http_post(
         f"https://api.telegram.org/bot{bot_token}/sendMessage",
         json={"chat_id": chat_id, "text": message, "disable_web_page_preview": True},
         timeout=timeout,
     )
-    return bool(getattr(response, "ok", False))
+    if bool(getattr(response, "ok", False)):
+        return True, "sent"
+    return False, _telegram_error_detail(response)
+
+
+def _telegram_error_detail(response: Any) -> str:
+    status_code = getattr(response, "status_code", None)
+    description = ""
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        description = str(payload.get("description") or "").strip()
+    if not description:
+        description = str(getattr(response, "text", "") or "").strip()
+    if description and status_code:
+        return f"HTTP {status_code}: {description}"
+    if description:
+        return description
+    if status_code:
+        return f"HTTP {status_code}"
+    return "failed"
+
+
+def discover_telegram_chats(
+    bot_token: str,
+    http_get: HttpGet = requests.get,
+    timeout: float = 5.0,
+) -> list[dict[str, str]]:
+    response = http_get(f"https://api.telegram.org/bot{bot_token}/getUpdates", timeout=timeout)
+    data = response.json()
+    chats: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for update in data.get("result", []):
+        if not isinstance(update, dict):
+            continue
+        chat = _chat_from_update(update)
+        if not chat:
+            continue
+        chat_id = str(chat.get("id", "")).strip()
+        if not chat_id or chat_id in seen:
+            continue
+        seen.add(chat_id)
+        chats.append(
+            {
+                "chat_id": chat_id,
+                "type": str(chat.get("type", "")),
+                "name": _chat_name(chat),
+            }
+        )
+    return chats
+
+
+def verify_telegram_credentials(
+    bot_token: str | None = None,
+    chat_id: str | None = None,
+    http_get: HttpGet = requests.get,
+    timeout: float = 5.0,
+) -> dict[str, object]:
+    resolved_token = bot_token if bot_token is not None else os.getenv("TELEGRAM_BOT_TOKEN", "")
+    resolved_chat_id = chat_id if chat_id is not None else os.getenv("TELEGRAM_CHAT_ID", "")
+    if not resolved_token or not resolved_chat_id:
+        return {
+            "configured": False,
+            "valid": False,
+            "detail": "missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID",
+            "chat": {},
+        }
+    try:
+        response = http_get(
+            f"https://api.telegram.org/bot{resolved_token}/getChat",
+            params={"chat_id": resolved_chat_id},
+            timeout=timeout,
+        )
+        payload = response.json()
+        if payload.get("ok") and isinstance(payload.get("result"), dict):
+            chat = payload["result"]
+            return {
+                "configured": True,
+                "valid": True,
+                "detail": "chat resolved",
+                "chat": {
+                    "chat_id": str(chat.get("id", resolved_chat_id)),
+                    "type": str(chat.get("type", "")),
+                    "name": _chat_name(chat),
+                },
+            }
+        return {
+            "configured": True,
+            "valid": False,
+            "detail": str(payload.get("description") or "getChat did not resolve chat"),
+            "chat": {},
+        }
+    except Exception as exc:
+        return {
+            "configured": True,
+            "valid": False,
+            "detail": f"getChat failed: {exc.__class__.__name__}",
+            "chat": {},
+        }
 
 
 def build_telegram_alerts(
@@ -44,6 +162,22 @@ def build_telegram_alerts(
     profile = profile or load_user_profile()
     telegram_profile = profile.model_copy(update={"notification_channels": ["telegram"]})
     return build_alerts(signals, profile=telegram_profile)
+
+
+def _chat_from_update(update: dict[str, Any]) -> dict[str, Any] | None:
+    for key in ["message", "edited_message", "channel_post", "edited_channel_post", "my_chat_member"]:
+        value = update.get(key)
+        if isinstance(value, dict) and isinstance(value.get("chat"), dict):
+            return value["chat"]
+    return None
+
+
+def _chat_name(chat: dict[str, Any]) -> str:
+    for key in ["username", "title", "first_name"]:
+        value = str(chat.get(key, "")).strip()
+        if value:
+            return value
+    return str(chat.get("id", ""))
 
 
 def dispatch_telegram_alerts(

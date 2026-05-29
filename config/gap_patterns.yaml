@@ -10,20 +10,41 @@ pain_terms:
   - expensive
   - frustrating
   - hate
+  - overpriced
   - manual
   - missing
   - opaque
   - painful
+  - pricing is ridiculous
   - slow
   - worse
 phrases:
   - why doesn't
+  - why doesn't this exist
   - too expensive
+  - overpriced
+  - pricing is ridiculous
+  - free alternative
+  - open source alternative
+  - i wish there was
+  - someone should build
+  - there's no good
+  - still no solution
   - too much manual
+  - takes too long
+  - too many steps
+  - should be automated
+  - waste of time
+  - manual process
   - hard to debug
   - no export
   - doesn't work
   - keeps breaking
+  - keeps crashing
+  - terrible ux
+  - documentation sucks
+  - support is awful
+  - abandoned project
   - no api
   - no integration
   - privacy concerns
@@ -40,7 +61,24 @@ weights:
   "no api": 4
   locked: 4
   expensive: 3
+  overpriced: 3
   pricing: 3
+  "pricing is ridiculous": 4
+  "free alternative": 3
+  "open source alternative": 3
+  "i wish there was": 4
+  "someone should build": 4
+  "there's no good": 4
+  "still no solution": 4
+  "terrible ux": 4
+  "documentation sucks": 4
+  "support is awful": 4
+  "abandoned project": 4
+  "takes too long": 3
+  "too many steps": 3
+  "should be automated": 4
+  "waste of time": 3
+  "manual process": 3
   integration: 3
   onboarding: 3
   manual: 2
@@ -48,18 +86,26 @@ weights:
 categories:
   billing:
     - expensive
+    - overpriced
     - subscription
     - invoice
     - billing
+    - pricing is ridiculous
+    - free alternative
+    - open source alternative
   developer_experience:
     - brittle
     - debug
     - manual
     - opaque
+    - documentation sucks
   reliability:
     - crash
+    - keeps crashing
     - broken
     - keeps breaking
+    - support is awful
+    - abandoned project
   privacy:
     - privacy
     - data leak
@@ -77,6 +123,20 @@ categories:
     - integration
   pricing:
     - expensive
+    - overpriced
     - pricing
+    - pricing is ridiculous
     - locked in
     - subscription
+  missing_features:
+    - why doesn't this exist
+    - i wish there was
+    - someone should build
+    - there's no good
+    - still no solution
+  workflow:
+    - takes too long
+    - too many steps
+    - should be automated
+    - waste of time
+    - manual process

@@ -12,6 +12,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from internet_radar.scheduler.heartbeat import record_scheduler_heartbeat
 from internet_radar.scheduler.jobs import ScheduledJob, build_job_plan, collect_high_frequency, run_scheduled_job
 
 
@@ -20,21 +21,57 @@ JobRunner = Callable[[str], Any] | str
 
 
 def run_cycle(collector: Collector = collect_high_frequency) -> int:
-    return collector()
+    try:
+        signals_24h = collector()
+        record_scheduler_heartbeat(job_name="manual_cycle", status="ok", signals_24h=signals_24h)
+        return signals_24h
+    except Exception as exc:
+        record_scheduler_heartbeat(
+            job_name="manual_cycle",
+            status="error",
+            detail=f"{exc.__class__.__name__}: {exc}",
+        )
+        raise
 
 
 def run_named_job(job_name: str, collector: Collector = collect_high_frequency) -> int:
-    if collector is not collect_high_frequency:
-        return collector()
-    result = run_scheduled_job(job_name)
-    print(f"scheduler job {job_name}: signals_24h={result.signals_24h} active_sources={result.active_sources}")
-    return result.signals_24h
+    try:
+        if collector is not collect_high_frequency:
+            signals_24h = collector()
+            record_scheduler_heartbeat(job_name=job_name, status="ok", signals_24h=signals_24h)
+            return signals_24h
+        result = run_scheduled_job(job_name)
+        print(f"scheduler job {job_name}: signals_24h={result.signals_24h} active_sources={result.active_sources}")
+        record_scheduler_heartbeat(
+            job_name=job_name,
+            status="ok",
+            signals_24h=result.signals_24h,
+            active_sources=result.active_sources,
+            detail="scheduled run completed",
+        )
+        return result.signals_24h
+    except Exception as exc:
+        record_scheduler_heartbeat(
+            job_name=job_name,
+            status="error",
+            detail=f"{exc.__class__.__name__}: {exc}",
+        )
+        raise
 
 
 def build_scheduler(job_runner: JobRunner | None = None, jobstore_path: str | Path | None = None) -> BlockingScheduler:
     scheduler = BlockingScheduler(
         timezone=os.getenv("TZ", "UTC"),
         jobstores=_persistent_jobstores(jobstore_path),
+    )
+    scheduler.add_job(
+        _record_daemon_heartbeat,
+        trigger=IntervalTrigger(minutes=5),
+        id="scheduler_daemon_heartbeat",
+        name="scheduler_daemon_heartbeat",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
     runner = job_runner or run_named_job
     for job in build_job_plan().jobs:
@@ -84,6 +121,7 @@ def main(
             time.sleep(args.interval_seconds)
 
     scheduler = build_scheduler()
+    record_scheduler_daemon_heartbeat(active_jobs=len(scheduler.get_jobs()), detail="scheduler started")
     scheduler.start()
 
 
@@ -107,6 +145,19 @@ def _persistent_jobstores(jobstore_path: str | Path | None = None) -> dict[str, 
     path = Path(jobstore_path or os.getenv("INTERNET_RADAR_SCHEDULER_DB", "data/scheduler_jobs.sqlite"))
     path.parent.mkdir(parents=True, exist_ok=True)
     return {"default": SQLAlchemyJobStore(url=f"sqlite:///{path}")}
+
+
+def _record_daemon_heartbeat() -> None:
+    record_scheduler_daemon_heartbeat(detail="scheduler heartbeat")
+
+
+def record_scheduler_daemon_heartbeat(*, active_jobs: int = 0, detail: str = "scheduler heartbeat") -> None:
+    record_scheduler_heartbeat(
+        job_name="scheduler_daemon",
+        status="ok",
+        active_sources=active_jobs,
+        detail=detail,
+    )
 
 
 if __name__ == "__main__":

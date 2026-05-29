@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from internet_radar.brain.local_llm import OllamaClient
 from internet_radar.brain.online_llm import GeminiClient, GroqClient, OpenRouterClient
@@ -55,6 +56,33 @@ class LLMRouter:
             return LLMChoice(provider="openrouter", model=OpenRouterClient.model, reason="online free overflow")
 
         return LLMChoice(provider="deterministic", model="rules", reason="no local model available")
+
+    def generate_json(
+        self,
+        task: str,
+        prompt: str,
+        *,
+        content_length: int | None = None,
+        allow_network: bool = True,
+    ) -> tuple[LLMChoice, dict[str, Any]]:
+        choice = self.route(task, content_length if content_length is not None else len(prompt))
+        if not allow_network or choice.provider == "deterministic":
+            return choice, {}
+        try:
+            if choice.provider == "ollama":
+                client = self.ollama_client
+                if isinstance(client, OllamaClient) and client.model != choice.model:
+                    client = OllamaClient(model=choice.model)
+                return choice, client.generate_json(prompt)
+            if choice.provider == "groq":
+                return choice, GroqClient(model=choice.model).generate_json(prompt)
+            if choice.provider == "gemini":
+                return choice, GeminiClient(model=choice.model).generate_json(prompt)
+            if choice.provider == "openrouter":
+                return choice, OpenRouterClient(model=choice.model).generate_json(prompt)
+        except Exception:
+            return choice, {}
+        return choice, {}
 
     def classify_signal(self, text: str, allow_network: bool = True) -> dict[str, object]:
         choice = self.route("classify", len(text))

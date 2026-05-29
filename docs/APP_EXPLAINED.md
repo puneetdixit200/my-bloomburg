@@ -36,7 +36,7 @@ The important files are:
 | Signal analysis | `internet_radar/signals/*.py` | Deduplication, sentiment, startup gaps, semantic clusters, cross-source agreement. |
 | LLM routing | `internet_radar/brain/llm_router.py` | Chooses Ollama/local, online free-tier, or deterministic rules. |
 | Alerts | `internet_radar/alerts/*.py` | Builds and optionally dispatches alerts. |
-| Scheduler | `internet_radar/scheduler/*.py` | Defines scheduled collection jobs and smart triggers. |
+| Scheduler | `internet_radar/scheduler/*.py` | Defines scheduled collection jobs, smart triggers, and runtime heartbeats. |
 
 ## Running The App
 
@@ -57,7 +57,31 @@ Run one collection from the CLI:
 ```bash
 uv run internet-radar-run --db data/radar.sqlite
 uv run internet-radar-run --live --db data/radar.sqlite
+uv run internet-radar-run --readiness --db data/radar.sqlite
+uv run internet-radar-run --readiness --verify-external --db data/radar.sqlite
+uv run internet-radar-run --credential-setup
+uv run internet-radar-run --reddit-check
+uv run internet-radar-run --ntfy-check
+uv run internet-radar-run --telegram-chats
+uv run internet-radar-run --telegram-check
+uv run internet-radar-run --test-alert --db data/radar.sqlite
+uv run internet-radar-run --alert-outbox-compact --db data/radar.sqlite
+uv run internet-radar-run --retry-alerts --alert-retry-limit 100 --db data/radar.sqlite
+uv run internet-radar-run --retry-alerts --force-alert-retry --alert-retry-limit 10 --db data/radar.sqlite
+uv run internet-radar-run --digest-alerts --alert-channel ntfy --db data/radar.sqlite
 ```
+
+The readiness command loads the local `.env` file and latest cached payload, then returns a JSON Make It Real audit so you can see whether the remaining work is code, runtime, or external credentials.
+Add `--verify-external` to readiness when you want that audit to verify the configured Reddit OAuth and Telegram credentials against their APIs.
+The credential-setup command prints missing credential keys and verification commands without printing the configured secret values. For Reddit, use app type `script`; the collector does not use a browser redirect, so `http://localhost:8080` is the redirect URI to enter in the Reddit app form.
+The reddit-check command requests a Reddit OAuth token and reports whether the configured Reddit script app credentials are valid.
+The ntfy-check command sends one ntfy delivery probe to the configured topic without writing a durable outbox row.
+The telegram-chats command uses Telegram `getUpdates` to list chat IDs after you send one message to the bot.
+The telegram-check command uses Telegram `getChat` to verify the configured token and chat ID without sending a message.
+The test-alert command sends a controlled alert to every ready configured channel and persists failures to the alert outbox.
+The alert-outbox-compact command coalesces duplicate pending failures after an outage.
+The retry-alerts command retries due pending outbox rows for channels that are currently credential-ready; raise `--alert-retry-limit` when recovering a large backlog. Add `--force-alert-retry` for a manual recovery probe that ignores backoff.
+The digest-alerts command sends one summary notification per ready channel and marks the channel backlog as digested, avoiding a burst of stale phone notifications after delivery recovers.
 
 Run the real scheduler entrypoint:
 
@@ -105,15 +129,15 @@ The dashboard Source Health table shows this as `live`, `fallback`, or `error`.
 
 Free keyed APIs can still run when keys exist, but paid integrations stay off.
 
-Credentialed Reddit OAuth is optional. If `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` are present, the app adds the `Reddit API` collector. If those values are empty, the no-key `Reddit JSON` collector still runs or falls back.
+Credentialed Reddit OAuth is optional. If `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` are present, the app adds the `Reddit API` collector. If those values are empty, the no-key `Reddit JSON` collector still scans the subreddits in `INTERNET_RADAR_REDDIT_SUBREDDITS` and only falls back when public Reddit JSON is unreachable.
 
 ## Source Registry
 
 The app currently has:
 
 ```text
-80 registered sources
-60 enabled by default
+81 registered sources
+61 enabled by default
 ```
 
 Sources are grouped like this:
@@ -127,10 +151,44 @@ Sources are grouped like this:
 | `jobs` | 10 | 6 | RemoteOK, Adzuna, The Muse, Arbeitnow, YC Jobs, Wellfound, Career Page Watcher, Levels.fyi Search, Greenhouse Jobs, Lever Jobs |
 | `news` | 9 | 8 | Tech RSS, Dev.to, Hashnode, Lobsters, Product Hunt, TLDR Newsletter, GDELT, Indie Hackers, Company Engineering Blogs |
 | `research` | 14 | 12 | arXiv, OpenAlex, Crossref, Europe PMC, PubMed, bioRxiv, medRxiv, Semantic Scholar, Wikipedia Pageviews, Papers With Code, Kaggle Datasets, Hugging Face Models, Hugging Face Papers, Conference RSS |
-| `search` | 6 | 4 | DuckDuckGo, Brave Search, Tavily, Wayback Machine, Common Crawl, Google Trends |
+| `search` | 7 | 5 | DuckDuckGo, Focused Web Crawler, Brave Search, Tavily, Wayback Machine, Common Crawl, Google Trends |
 | `social` | 10 | 6 | Reddit API, Reddit JSON, Hacker News, HN Algolia, Bluesky, Mastodon, Nitter, Discord Monitor, YouTube Search, Stack Overflow |
 
 The registry is metadata. The actual live behavior is in `default_collectors()` inside `internet_radar/collectors/live.py`.
+
+## Focused Web Crawler
+
+The app includes a free focused crawler for cases where public APIs are weak or paid search APIs are unavailable. It is intentionally small and seed-based.
+
+```text
+config/crawl_seeds.yaml
+  -> FocusedWebCrawlerCollector
+  -> Scrapy link extraction
+  -> Trafilatura clean text extraction
+  -> compact SignalRecord rows
+  -> SQLite/dashboard
+```
+
+The crawler:
+
+- crawls only configured seed URLs
+- respects `robots.txt` by default
+- follows only same-host links when a seed enables `follow_links`
+- caps total pages with `INTERNET_RADAR_CRAWLER_MAX_TOTAL_PAGES`
+- caps per-seed pages with `INTERNET_RADAR_CRAWLER_MAX_PAGES_PER_SEED`
+- stores title, summary, URL, content hash, text length, and link count
+- does not store raw HTML
+
+Use these env vars to tune it:
+
+```bash
+INTERNET_RADAR_ENABLE_CRAWLER=1
+INTERNET_RADAR_CRAWL_SEEDS=config/crawl_seeds.yaml
+INTERNET_RADAR_CRAWLER_MAX_TOTAL_PAGES=8
+INTERNET_RADAR_CRAWLER_MAX_PAGES_PER_SEED=2
+INTERNET_RADAR_CRAWLER_RESPECT_ROBOTS=1
+INTERNET_RADAR_CRAWLER_TIMEOUT_SECONDS=8
+```
 
 ## Core Data Model
 
@@ -169,7 +227,8 @@ The `score` field is the main ranking score. It is always clamped to `0-100`.
 7. Store them in SQLite.
 8. Read back up to `INTERNET_RADAR_DASHBOARD_SIGNAL_LIMIT` signals, default `500`.
 9. Ask the LLM router which model path would be used.
-10. Return a `BriefingPayload`.
+10. Build pipeline analysis artifacts: summary, classifications, gap analysis, trend predictions, idea validation, daily briefing, and LLM insight.
+11. Return a `BriefingPayload`.
 
 The app keeps 500 signals for dashboard tabs because some categories, like hackathons, can have lower raw scores than code/social signals. Keeping only the global top 100 can hide whole tabs.
 
@@ -1069,6 +1128,8 @@ else -> SKILL_RADAR
 
 Default channel is `ntfy`, unless profile notification channels override it.
 
+Failed dispatches are written to SQLite in `alert_outbox` with the signal, channel, attempt count, last error, and status. The scheduler passes `INTERNET_RADAR_ALERT_OUTBOX_DB` (or `INTERNET_RADAR_DB`) into alert dispatch, so ntfy timeouts or missing downstream channels remain visible and retryable instead of being lost. The `alert_outbox_retry` APScheduler job runs every 15 minutes and retries up to `INTERNET_RADAR_ALERT_OUTBOX_RETRY_LIMIT` due pending rows. Recent repeated failures use exponential backoff, while the CLI `--force-alert-retry` flag can probe recovery immediately.
+
 ## LLM Routing
 
 The app can use local or online models, but has deterministic fallback.
@@ -1096,6 +1157,29 @@ The dashboard shows the route as:
 ```text
 provider:model
 ```
+
+When `INTERNET_RADAR_ENABLE_LLM_ANALYSIS=1`, the pipeline also makes one bounded JSON generation call for the Morning Intelligence Briefing. The prompt includes only the top signals and asks for a headline, narrative, opportunities, risks, actions, and confidence. If the selected LLM is unavailable or returns invalid JSON, the app stores a deterministic fallback insight instead of failing collection.
+
+## Semantic Embeddings
+
+Radar Search can use deterministic local embeddings or provider-backed embeddings.
+
+Routing order:
+
+```text
+Ollama nomic-embed-text installed -> local Ollama embeddings
+GEMINI_API_KEY set                -> Gemini gemini-embedding-2
+COHERE_API_KEY set                -> Cohere embed-english-light-v3.0
+otherwise                         -> deterministic hashed bag-of-words
+```
+
+The local `.env` can force Gemini-backed semantic search with:
+
+```text
+INTERNET_RADAR_VECTOR_BACKEND=gemini
+```
+
+Gemini embeddings use the Gemini API `embedContent` REST endpoint and request 768 output dimensions to keep vectors smaller while still using provider-backed semantic similarity.
 
 ## Morning Intelligence Briefing Calculation
 
@@ -1305,9 +1389,12 @@ It builds an APScheduler `BlockingScheduler` with a persistent SQLite job store:
 
 ```text
 INTERNET_RADAR_SCHEDULER_DB=data/scheduler_jobs.sqlite
+INTERNET_RADAR_SCHEDULER_HEARTBEAT_MAX_AGE_MINUTES=30
 ```
 
-This lets job definitions survive process restarts without adding a heavier analytics database. DuckDB is intentionally not part of the runtime; SQLite remains the source of truth for both current signals and historical snapshots to keep disk usage low.
+Scheduler startup, daemon keepalives, every named scheduler job, and every `scheduler/runner.py --once` cycle write rows to `scheduler_heartbeats` in `INTERNET_RADAR_DB`. The Make It Real readiness audit uses the latest fresh heartbeat as runtime evidence that scheduled collection is actually alive; by default, heartbeats older than 30 minutes are treated as stale.
+
+This lets job definitions survive process restarts. SQLite remains the source of truth for both current signals and historical snapshots, while dashboard distribution analytics can run through DuckDB when `INTERNET_RADAR_ANALYTICS_BACKEND=auto` or `duckdb`. If DuckDB is unavailable, the app falls back to the lightweight Python analytics path.
 
 ## Alert Dispatch
 
@@ -1321,6 +1408,8 @@ email via Mailgun
 ```
 
 In free-only mode, Mailgun credentials are blanked out so email dispatch stays disabled.
+
+If a configured channel fails, the dispatch result is persisted in `alert_outbox`. Automatic scheduler alerts first filter profile channels to the channels that are credential-ready, which prevents known-missing channels from generating repeated failures. Repeated failures for the same signal/channel update the existing pending row and increment attempts instead of creating unbounded duplicates. Retried rows move to `sent` after successful delivery; unconfigured channels are skipped until credentials exist, and recent repeated failures wait for exponential backoff before another automatic attempt. Other failures remain `pending` with the latest error. The Make It Real readiness audit treats pending outbox rows for currently configured channels as an alert-delivery blocker, so the app does not claim phone alerts are working only because a topic or token is configured; pending rows for unconfigured channels remain visible but are covered by their own credential blockers. The Profile page includes the latest outbox rows next to channel readiness, and the scheduler automatically runs the retry job while the background process is active.
 
 Alert readiness is also exposed:
 

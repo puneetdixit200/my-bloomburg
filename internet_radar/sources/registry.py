@@ -80,6 +80,7 @@ SOURCE_REGISTRY: list[SourceDefinition] = [
     _source("CoinGecko", "finance", "api", "https://api.coingecko.com/api/v3", enabled=True),
     _source("Alpha Vantage", "finance", "api", "https://www.alphavantage.co/query", auth=True),
     _source("DuckDuckGo", "search", "library", "https://duckduckgo.com", enabled=True),
+    _source("Focused Web Crawler", "search", "crawler", "config/crawl_seeds.yaml", enabled=True, notes="Free focused Scrapy + Trafilatura crawler for configured public seed URLs."),
     _source("Brave Search", "search", "api", "https://api.search.brave.com/res/v1/web/search", auth=True),
     _source("Tavily", "search", "api", "https://api.tavily.com/search", auth=True),
     _source("Wayback Machine", "search", "api", "https://archive.org/wayback/available", enabled=True),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -11,7 +12,7 @@ from internet_radar.alerts.alert_manager import AlertMessage
 from internet_radar.alerts.discord_webhook import send_discord_webhook
 from internet_radar.alerts.email_sender import send_mailgun_email
 from internet_radar.alerts.ntfy_notifier import send_ntfy
-from internet_radar.alerts.telegram_bot import send_telegram
+from internet_radar.alerts.telegram_bot import send_telegram_with_detail
 
 
 HttpPost = Callable[..., Any]
@@ -65,21 +66,29 @@ def dispatch_alert(
     alert: AlertMessage,
     config: dict[str, str] | None = None,
     http_post: HttpPost = requests.post,
+    outbox_db_path: str | Path | None = None,
 ) -> list[AlertDispatchResult]:
     resolved_config = _config(config or {})
     results: list[AlertDispatchResult] = []
     for channel in alert.channels:
         normalized = channel.lower().strip()
-        if normalized == "ntfy":
-            results.append(_send_ntfy(alert, resolved_config, http_post))
-        elif normalized == "telegram":
-            results.append(_send_telegram(alert, resolved_config, http_post))
-        elif normalized == "discord":
-            results.append(_send_discord(alert, resolved_config, http_post))
-        elif normalized == "email":
-            results.append(_send_email(alert, resolved_config, http_post))
-        else:
-            results.append(AlertDispatchResult(channel=channel, sent=False, detail="unsupported channel"))
+        try:
+            if normalized == "ntfy":
+                results.append(_send_ntfy(alert, resolved_config, http_post))
+            elif normalized == "telegram":
+                results.append(_send_telegram(alert, resolved_config, http_post))
+            elif normalized == "discord":
+                results.append(_send_discord(alert, resolved_config, http_post))
+            elif normalized == "email":
+                results.append(_send_email(alert, resolved_config, http_post))
+            else:
+                results.append(AlertDispatchResult(channel=channel, sent=False, detail="unsupported channel"))
+        except requests.RequestException as exc:
+            results.append(AlertDispatchResult(channel=normalized or channel, sent=False, detail=f"network error: {exc.__class__.__name__}"))
+    if outbox_db_path is not None:
+        from internet_radar.alerts.outbox import AlertOutbox
+
+        AlertOutbox(outbox_db_path).record_results(alert, results)
     return results
 
 
@@ -96,8 +105,8 @@ def _send_telegram(alert: AlertMessage, config: dict[str, str], http_post: HttpP
     chat_id = config.get("telegram_chat_id")
     if not token or not chat_id:
         return AlertDispatchResult(channel="telegram", sent=False, detail="missing telegram credentials")
-    sent = send_telegram(alert.body, bot_token=token, chat_id=chat_id, http_post=http_post)
-    return AlertDispatchResult(channel="telegram", sent=sent, detail="sent" if sent else "failed")
+    sent, detail = send_telegram_with_detail(alert.body, bot_token=token, chat_id=chat_id, http_post=http_post)
+    return AlertDispatchResult(channel="telegram", sent=sent, detail=detail)
 
 
 def _send_discord(alert: AlertMessage, config: dict[str, str], http_post: HttpPost) -> AlertDispatchResult:

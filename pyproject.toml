@@ -5,12 +5,16 @@ description = "Local-first Internet Radar v2 signal intelligence dashboard"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "apscheduler>=3.10",
+    "duckdb>=1.1",
     "pandas>=2.2",
+    "plotly>=6.7.0",
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "requests>=2.32",
+    "scrapy>=2.12",
     "sqlalchemy>=2.0",
     "streamlit>=1.36",
+    "trafilatura>=2.0",
 ]
 
 [project.optional-dependencies]

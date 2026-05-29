@@ -4,6 +4,10 @@ profile:
     - ai
     - streamlit
     - automation
+    - robotics
+    - competitive coding
+    - nextjs
+    - fastapi
     - github
     - data analysis
     - sql
@@ -16,6 +20,9 @@ profile:
     - mcp
     - internships
     - hackathons
+    - AI agents
+    - open source
+    - YC startups
     - ai developer tools
     - data apps
     - open source projects
@@ -28,8 +35,14 @@ profile:
     - build portfolio projects with live public data
     - discover hackathons before they get crowded
     - track tools that can become useful products
-  blocked_topics: []
+    - win hackathons
+    - build SaaS
+  blocked_topics:
+    - cryptocurrency
+    - nft
+    - web3
   alert_threshold: 70
   notification_channels:
     - ntfy
+    - telegram
   llm_preference: auto

@@ -1,0 +1,60 @@
+seeds:
+  - name: Devpost Hackathons
+    url: https://devpost.com/hackathons
+    category: hackathons
+    topic: hackathon opportunities
+    score: 62
+    max_pages: 1
+    follow_links: false
+    include_patterns:
+      - /hackathons
+
+  - name: MLH Events
+    url: https://mlh.io/seasons/2026/events
+    category: hackathons
+    topic: student hackathons
+    score: 60
+    max_pages: 1
+    follow_links: false
+    include_patterns:
+      - /events
+
+  - name: YC Startup Jobs
+    url: https://www.ycombinator.com/jobs
+    category: jobs
+    topic: startup internships and jobs
+    score: 61
+    max_pages: 1
+    follow_links: false
+    include_patterns:
+      - /jobs
+
+  - name: Model Context Protocol Servers
+    url: https://github.com/modelcontextprotocol/servers
+    category: code
+    topic: mcp server projects
+    score: 64
+    max_pages: 1
+    follow_links: false
+    include_patterns:
+      - modelcontextprotocol
+
+  - name: Hugging Face Papers
+    url: https://huggingface.co/papers
+    category: research
+    topic: ai research momentum
+    score: 63
+    max_pages: 1
+    follow_links: false
+    include_patterns:
+      - /papers
+
+  - name: Product Hunt Topics
+    url: https://www.producthunt.com/topics/artificial-intelligence
+    category: news
+    topic: ai product launches
+    score: 59
+    max_pages: 1
+    follow_links: false
+    include_patterns:
+      - /topics

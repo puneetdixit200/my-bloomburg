@@ -87,6 +87,7 @@ DEFAULT_SOURCE_INTERVALS: dict[str, float] = {
     "google play": 5.0,
     "steam": 1.0,
     "duckduckgo": 5.0,
+    "focused web crawler": 5.0,
     "google trends": 5.0,
     "wayback machine": 1.0,
     "libraries.io": 2.0,

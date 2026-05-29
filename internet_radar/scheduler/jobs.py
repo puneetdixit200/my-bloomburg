@@ -8,7 +8,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from internet_radar.alerts.alert_manager import build_alerts
-from internet_radar.alerts.dispatcher import AlertDispatchResult, dispatch_alert
+from internet_radar.alerts.outbox import AlertOutbox
+from internet_radar.alerts.dispatcher import AlertDispatchResult, alert_readiness, dispatch_alert
 from internet_radar.collectors.live import (
     AdzunaCollector,
     ArbeitnowCollector,
@@ -104,6 +105,7 @@ SCHEDULE_GROUPS: list[JobGroup] = [
             ScheduledJob("hackathon_deadline_check", "interval", minutes=15),
             ScheduledJob("career_page_watcher", "interval", minutes=15),
             ScheduledJob("hn_frontpage_check", "interval", minutes=15),
+            ScheduledJob("alert_outbox_retry", "interval", minutes=15),
         ],
     ),
     JobGroup(
@@ -204,6 +206,8 @@ def run_scheduled_job(
     use_live_network: bool | None = None,
     dispatch_alerts: bool | None = None,
 ) -> JobRunResult:
+    if job_name == "alert_outbox_retry":
+        return _run_alert_outbox_retry(job_name)
     if use_live_network is None:
         use_live_network = os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1"
     briefing = run_radar_once(
@@ -230,10 +234,45 @@ def _maybe_dispatch_alerts(briefing: BriefingPayload, dispatch_alerts: bool | No
     if not dispatch_alerts:
         return []
     profile = load_user_profile()
+    ready_channels = {item.channel for item in alert_readiness() if item.ready}
     results: list[AlertDispatchResult] = []
     for alert in build_alerts(briefing.top_signals, profile):
-        results.extend(dispatch_alert(alert))
+        deliverable_channels = [channel for channel in alert.channels if channel in ready_channels]
+        if not deliverable_channels:
+            continue
+        deliverable_alert = alert.__class__(
+            signal_id=alert.signal_id,
+            kind=alert.kind,
+            title=alert.title,
+            body=alert.body,
+            channels=deliverable_channels,
+            score=alert.score,
+        )
+        results.extend(dispatch_alert(deliverable_alert, outbox_db_path=_alert_outbox_db_path()))
     return results
+
+
+def _alert_outbox_db_path() -> Path:
+    return Path(os.getenv("INTERNET_RADAR_ALERT_OUTBOX_DB") or os.getenv("INTERNET_RADAR_DB", "data/radar.sqlite"))
+
+
+def _run_alert_outbox_retry(job_name: str) -> JobRunResult:
+    retry_limit = _alert_outbox_retry_limit()
+    dispatches = AlertOutbox(_alert_outbox_db_path()).retry_pending(limit=retry_limit)
+    return JobRunResult(
+        job_name=job_name,
+        active_sources=0,
+        signals_24h=0,
+        source_health={"Alert Outbox": f"retried ({len(dispatches)})"},
+        alert_dispatches=dispatches,
+    )
+
+
+def _alert_outbox_retry_limit() -> int:
+    try:
+        return max(1, int(os.getenv("INTERNET_RADAR_ALERT_OUTBOX_RETRY_LIMIT", "25")))
+    except ValueError:
+        return 25
 
 
 def smart_triggers_for_signals(signals: list[SignalRecord], now: datetime | None = None) -> list[SmartTrigger]:

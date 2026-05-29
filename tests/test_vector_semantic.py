@@ -26,9 +26,10 @@ def test_embed_router_prefers_ollama_nomic_when_available():
     assert choice.model == "nomic-embed-text"
 
 
-def test_embed_router_uses_cohere_key_as_online_fallback():
+def test_embed_router_uses_cohere_key_as_online_fallback(monkeypatch):
     from internet_radar.brain.embed_engine import CohereEmbedder, EmbeddingRouter
 
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     router = EmbeddingRouter(available_models=[], cohere_api_key="cohere-key")
 
     choice = router.route()
@@ -36,6 +37,43 @@ def test_embed_router_uses_cohere_key_as_online_fallback():
     assert choice.provider == "cohere"
     assert choice.model == "embed-english-light-v3.0"
     assert isinstance(router.embedder(), CohereEmbedder)
+
+
+def test_embed_router_uses_gemini_key_before_cohere(monkeypatch):
+    from internet_radar.brain.embed_engine import EmbeddingRouter, GeminiEmbedder
+
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    router = EmbeddingRouter(available_models=[], cohere_api_key="cohere-key")
+
+    choice = router.route()
+
+    assert choice.provider == "gemini"
+    assert choice.model == "gemini-embedding-2"
+    assert isinstance(router.embedder(), GeminiEmbedder)
+
+
+def test_gemini_embedder_normalizes_response_without_real_network():
+    from internet_radar.brain.embed_engine import GeminiEmbedder
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {"embedding": {"values": [3, 4]}}
+
+    calls: list[dict[str, object]] = []
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return FakeResponse()
+
+    embedder = GeminiEmbedder(api_key="gemini-key", http_post=fake_post)
+
+    assert embedder.embed("browser agents") == [0.6, 0.8]
+    assert calls[0]["url"] == "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent"
+    assert calls[0]["headers"]["x-goog-api-key"] == "gemini-key"
+    assert calls[0]["json"]["output_dimensionality"] == 768
 
 
 def test_cohere_embedder_normalizes_response_without_real_network():
@@ -110,6 +148,18 @@ def test_chroma_vector_store_uses_collection_upsert_and_query():
     assert client.name == "internet_radar_signals"
     assert results[0].signal.id == "browser"
     assert results[0].similarity > 0
+
+
+def test_create_vector_store_can_use_explicit_gemini_backend(monkeypatch):
+    from internet_radar.brain.embed_engine import GeminiEmbedder
+    from internet_radar.storage.vector_store import SemanticVectorStore, create_vector_store
+
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+
+    store = create_vector_store(backend="gemini")
+
+    assert isinstance(store, SemanticVectorStore)
+    assert isinstance(store.embedder, GeminiEmbedder)
 
 
 def test_semantic_clusters_group_related_pain_signals():

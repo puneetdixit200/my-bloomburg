@@ -25,9 +25,10 @@ def test_architecture_root_runtime_commands_exist_without_import_side_effects():
     runpy.run_path(str(telegram_wrapper))
 
 
-def test_scheduler_runner_once_mode_is_testable_without_sleep():
+def test_scheduler_runner_once_mode_is_testable_without_sleep(monkeypatch, tmp_path):
     from internet_radar.scheduler.runner import main
 
+    monkeypatch.setenv("INTERNET_RADAR_DB", str(tmp_path / "radar.sqlite"))
     calls: list[str] = []
 
     def collect_once() -> int:

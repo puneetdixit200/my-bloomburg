@@ -2,24 +2,69 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
+from html import escape
 import os
+from pathlib import Path
+import re
 from threading import Thread
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 
+from dashboard.theme import (
+    COLORS,
+    alert_card_html,
+    inject_custom_css,
+    insight_card_html,
+    project_detail_html,
+    radar_bar_chart,
+    render_briefing_hero,
+    render_glow_metric,
+    render_idea_card,
+    section_header_html,
+    signal_card_html,
+    source_status_html,
+    velocity_sparkline,
+)
 from internet_radar.alerts.dispatcher import alert_readiness
+from internet_radar.alerts.outbox import AlertOutbox
 from internet_radar.config.settings import load_user_profile
 from internet_radar.dashboard_data import PAGE_DEFINITIONS, build_dashboard_payload
+from internet_radar.operations.readiness import build_make_real_readiness, readiness_frame
 from internet_radar.pipeline import run_radar_once
-from internet_radar.sources.registry import SOURCE_REGISTRY, enabled_sources
+from internet_radar.sources.registry import SOURCE_REGISTRY
+from internet_radar.storage.analytics import compute_signal_analytics
 from internet_radar.storage.models import BriefingPayload, SignalRecord
 from internet_radar.storage.payload_cache import load_briefing_payload, payload_cache_age_seconds, save_briefing_payload
 
 
 CATEGORIES = ["code", "social", "news", "jobs", "hackathons", "research", "finance", "search", "app_stores"]
 _BACKGROUND_REFRESH_RUNNING = False
+_APP_FILE = Path(__file__).resolve()
+_PAGES_DIR = _APP_FILE.parent / "pages"
+SIDEBAR_NAV_ITEMS = [
+    (_PAGES_DIR / "00_briefing.py", "BRIEFING"),
+    (_PAGES_DIR / "01_github_radar.py", "GITHUB RADAR"),
+    (_PAGES_DIR / "02_hackathon_radar.py", "HACKATHON RADAR"),
+    (_PAGES_DIR / "03_internship_radar.py", "INTERNSHIP RADAR"),
+    (_PAGES_DIR / "04_startup_gaps.py", "STARTUP GAPS"),
+    (_PAGES_DIR / "05_trend_velocity.py", "TREND VELOCITY"),
+    (_PAGES_DIR / "06_research_radar.py", "RESEARCH RADAR"),
+    (_PAGES_DIR / "07_funding_radar.py", "FUNDING RADAR"),
+    (_PAGES_DIR / "08_skill_radar.py", "SKILL RADAR"),
+    (_PAGES_DIR / "09_community_radar.py", "COMMUNITY RADAR"),
+    (_PAGES_DIR / "10_app_store_radar.py", "APP STORE RADAR"),
+    (_PAGES_DIR / "11_search_radar.py", "SEARCH RADAR"),
+    (_PAGES_DIR / "12_profile.py", "PROFILE"),
+    (_APP_FILE, "APP REPORT"),
+]
+
+
+def _render_sidebar_navigation() -> None:
+    for page_path, label in SIDEBAR_NAV_ITEMS:
+        st.page_link(page_path, label=label, use_container_width=True)
+    st.markdown('<hr style="border:none;border-top:1px solid #30363D;margin:1.2rem 0;">', unsafe_allow_html=True)
 
 
 def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
@@ -33,6 +78,7 @@ def _signals_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
                 "title": signal.title,
                 "source": signal.source,
                 "category": signal.category,
+                "summary": signal.summary,
                 "url": signal.url,
             }
             for signal in signals
@@ -89,6 +135,46 @@ def _alert_readiness_frame() -> pd.DataFrame:
     )
 
 
+def _alert_outbox_frame(db_path: str | Path | None = None) -> pd.DataFrame:
+    path = db_path or os.getenv("INTERNET_RADAR_ALERT_OUTBOX_DB") or os.getenv("INTERNET_RADAR_DB", "data/radar.sqlite")
+    rows = []
+    for item in AlertOutbox(path).list_recent(limit=25):
+        rows.append(
+            {
+                "status": item.status,
+                "channel": item.channel,
+                "signal_id": item.signal_id,
+                "kind": item.kind,
+                "attempts": item.attempts,
+                "last_error": item.last_error,
+                "updated_at": item.updated_at,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _make_real_readiness_frame(page_payload: dict[str, object], db_path: str | Path | None = None) -> pd.DataFrame:
+    collection = dict(page_payload.get("collection", {}))
+    collection_mode = str(collection.get("mode") or "sample")
+    if collection_mode not in {"live", "sample"}:
+        collection_mode = "sample"
+    payload = BriefingPayload(
+        active_sources=int(page_payload.get("active_sources", 0) or 0),
+        signals_24h=int(page_payload.get("signals_24h", 0) or 0),
+        top_signals=list(page_payload.get("signals", [])),
+        source_health=dict(page_payload.get("source_health", {})),
+        source_counts=dict(page_payload.get("source_counts", {})),
+        source_durations_seconds=dict(page_payload.get("source_durations_seconds", {})),
+        historical_trends=list(page_payload.get("historical_trends", [])),
+        analysis_artifacts=dict(page_payload.get("analysis_artifacts", {})),
+        llm_status=str(page_payload.get("llm_status", "unknown")),
+        collection_duration_seconds=float(collection.get("duration_seconds") or 0.0),
+        collection_mode=collection_mode,
+        loaded_from_cache=bool(collection.get("loaded_from_cache", False)),
+    )
+    return readiness_frame(build_make_real_readiness(db_path=db_path, payload=payload))
+
+
 def _source_category(source_name: str) -> str | None:
     for source in SOURCE_REGISTRY:
         if source.name == source_name:
@@ -107,7 +193,7 @@ def _status_mode(status: str) -> str:
 
 
 def _signal_preview_frame(signals: list[SignalRecord], limit: int = 10) -> pd.DataFrame:
-    columns = ["score", "title", "source", "category", "url"]
+    columns = ["topic", "title", "source", "category", "summary", "url"]
     frame = _signals_to_frame(_balanced_signals(signals, limit=limit, max_per_source=2))
     if frame.empty:
         return pd.DataFrame(columns=columns)
@@ -157,7 +243,190 @@ def _balanced_signals(
 
 
 def _signal_table_column_config() -> dict[str, object]:
-    return {"url": st.column_config.LinkColumn("url", display_text="Open")}
+    return {}
+
+
+def _drop_score_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    drop_columns = [
+        column
+        for column in frame.columns
+        if "score" in str(column).lower() or str(column).lower() == "relevance"
+    ]
+    return frame.drop(columns=drop_columns, errors="ignore")
+
+
+def _link_columns(frame: pd.DataFrame) -> list[str]:
+    link_names = {"url", "link", "href", "source_url", "source_link", "permalink"}
+    return [column for column in frame.columns if str(column).lower() in link_names]
+
+
+def _link_label_column(frame: pd.DataFrame) -> str | None:
+    for column in ("topic", "title", "project", "skill", "problem", "name", "signal_id"):
+        if column in frame.columns:
+            return column
+    return None
+
+
+def _prepare_visible_frame(frame: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    visible = _drop_score_columns(frame).copy()
+    link_columns = _link_columns(visible)
+    if not link_columns:
+        return visible, False
+    label_column = _link_label_column(visible)
+    if not label_column:
+        return visible.drop(columns=link_columns, errors="ignore"), False
+    link_column = link_columns[0]
+    has_links = False
+    for index, row in visible.iterrows():
+        url = str(row.get(link_column) or "").strip()
+        label = str(row.get(label_column) or url).strip()
+        if url and label:
+            visible.at[index, label_column] = (
+                f'<a href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{escape(label)}</a>'
+            )
+            has_links = True
+    return visible.drop(columns=link_columns, errors="ignore"), has_links
+
+
+def _export_visible_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    visible = _drop_score_columns(frame)
+    return visible.drop(columns=_link_columns(visible), errors="ignore")
+
+
+def _render_table(frame: pd.DataFrame, *, height: int | None = None) -> None:
+    visible, has_links = _prepare_visible_frame(frame)
+    if visible.empty or not has_links:
+        kwargs: dict[str, object] = {"width": "stretch", "hide_index": True}
+        if height is not None:
+            kwargs["height"] = height
+        st.dataframe(visible, **kwargs)
+        return
+    st.markdown(_frame_to_html(visible), unsafe_allow_html=True)
+
+
+def _frame_to_html(frame: pd.DataFrame) -> str:
+    headers = "".join(f"<th>{escape(str(column).replace('_', ' ').title())}</th>" for column in frame.columns)
+    rows = []
+    for _, row in frame.iterrows():
+        cells = "".join(f"<td>{_table_cell_html(row[column])}</td>" for column in frame.columns)
+        rows.append(f"<tr>{cells}</tr>")
+    return f'<div class="radar-table-wrap"><table class="radar-table"><thead><tr>{headers}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+
+
+def _table_cell_html(value: object) -> str:
+    text = "" if value is None else str(value)
+    if text.startswith("<a ") and "</a>" in text:
+        return text
+    return escape(text)
+
+
+def _public_text(value: object) -> str:
+    text = str(value or "")
+    text = re.sub(r"(?im)^\s*(?:top\s+score|avg\s+score|average\s+score|score)\s*:?\s*\d+(?:\.\d+)?(?:/\d+)?\s*$", "", text)
+    text = re.sub(r"\b(?:top\s+score|avg\s+score|average\s+score|score)\s*:?\s*\d+(?:\.\d+)?(?:/\d+)?\b", "", text, flags=re.I)
+    text = re.sub(r"\b(?:with|at)\s+(?:a\s+)?score\s+(?:of\s+)?\d+(?:\.\d+)?(?:/\d+)?\b", "", text, flags=re.I)
+    text = re.sub(r"\bscored\s+\d+(?:\.\d+)?(?:/\d+)?\b", "", text, flags=re.I)
+    text = re.sub(r"\s+([.,;:])", r"\1", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip(" -|\n\t")
+
+
+def _public_json(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _public_json(item) for key, item in value.items() if "score" not in str(key).lower()}
+    if isinstance(value, list):
+        return [_public_json(item) for item in value]
+    if isinstance(value, str):
+        return _public_text(value)
+    return value
+
+
+def _render_section_header(title: str, detail: str = "") -> None:
+    st.markdown(section_header_html(title, detail), unsafe_allow_html=True)
+
+
+def _signal_action(signal: SignalRecord) -> str:
+    if signal.score >= 90:
+        return "ACT NOW"
+    if signal.score >= 75:
+        return "STRONG"
+    return "WATCH"
+
+
+def _render_signal_cards(signals: list[SignalRecord], limit: int = 4) -> None:
+    for signal in signals[:limit]:
+        st.markdown(
+            signal_card_html(
+                signal.title,
+                signal.source,
+                signal.category,
+                signal.score,
+                summary=_public_text(signal.summary or signal.topic),
+                url=signal.url,
+                action=_signal_action(signal),
+            ),
+            unsafe_allow_html=True,
+        )
+
+
+def _format_count(value: object) -> str:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return str(value or "")
+    if numeric >= 1_000_000:
+        return f"{numeric / 1_000_000:.1f}M"
+    if numeric >= 1_000:
+        return f"{numeric / 1_000:.1f}K"
+    return str(int(numeric))
+
+
+def _sparkline_values(signal: SignalRecord) -> list[int]:
+    base = max(10, min(int(signal.score), 100))
+    previous = max(5, base - max(8, int(signal.velocity or 12)))
+    midpoint = int((base + previous) / 2)
+    return [max(0, previous - 8), previous, midpoint, min(100, midpoint + 7), base]
+
+
+def _freshness_bucket_counts(signals: list[SignalRecord]) -> dict[str, int]:
+    now = datetime.now(UTC)
+    buckets = {"< 6h": 0, "< 24h": 0, "< 72h": 0}
+    for signal in signals:
+        observed = signal.observed_at
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=UTC)
+        hours = (now - observed).total_seconds() / 3600
+        if hours <= 6:
+            buckets["< 6h"] += 1
+        if hours <= 24:
+            buckets["< 24h"] += 1
+        if hours <= 72:
+            buckets["< 72h"] += 1
+    return buckets
+
+
+def _page_metric_values(signals: list[SignalRecord]) -> dict[str, int | str]:
+    return {
+        "signals": len(signals),
+        "sources": len({signal.source for signal in signals}),
+        "topics": len({signal.topic for signal in signals}),
+        "categories": len({signal.category for signal in signals}),
+    }
+
+
+def _render_page_metric_strip(signals: list[SignalRecord]) -> None:
+    metrics = _page_metric_values(signals)
+    columns = st.columns(4)
+    with columns[0]:
+        render_glow_metric(st, "Signals", metrics["signals"], "teal")
+    with columns[1]:
+        render_glow_metric(st, "Sources", metrics["sources"], "sky")
+    with columns[2]:
+        render_glow_metric(st, "Topics", metrics["topics"], "purple")
+    with columns[3]:
+        render_glow_metric(st, "Categories", metrics["categories"], "emerald")
 
 
 def _project_signals(signals: list[SignalRecord]) -> list[SignalRecord]:
@@ -169,7 +438,6 @@ def _projects_to_frame(signals: list[SignalRecord]) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "score": signal.score,
                 "project": _project_name(signal),
                 "source": signal.source,
                 "stars": signal.metadata.get("stars", ""),
@@ -221,7 +489,6 @@ def _gaps_to_frame(gaps: list[object]) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "score": getattr(gap, "score", 0),
                 "pain_level": getattr(gap, "pain_level", 0),
                 "complaints": getattr(gap, "complaint_count", 0),
                 "problem": getattr(gap, "problem", ""),
@@ -258,7 +525,6 @@ def _skill_recommendations_to_frame(recommendations: list[object]) -> pd.DataFra
     return pd.DataFrame(
         [
             {
-                "score": getattr(recommendation, "score", 0),
                 "skill": getattr(recommendation, "skill", ""),
                 "signals": getattr(recommendation, "demand_signals", 0),
                 "sources": ", ".join(getattr(recommendation, "sources", [])),
@@ -274,7 +540,6 @@ def _source_agreements_to_frame(agreements: list[object]) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "score": getattr(agreement, "score", 0),
                 "topic": getattr(agreement, "topic", ""),
                 "verdict": getattr(agreement, "verdict", ""),
                 "sources": f"{getattr(agreement, 'source_count', 0)}/{getattr(agreement, 'known_source_count', 0)}",
@@ -289,13 +554,26 @@ def _source_agreements_to_frame(agreements: list[object]) -> pd.DataFrame:
 def _objects_to_frame(items: list[object]) -> pd.DataFrame:
     rows = []
     for item in items:
-        if is_dataclass(item):
+        if isinstance(item, dict):
+            rows.append(item)
+        elif is_dataclass(item):
             rows.append(asdict(item))
         elif hasattr(item, "model_dump"):
             rows.append(item.model_dump(mode="json"))
         else:
             rows.append(getattr(item, "__dict__", {}))
     return pd.DataFrame(rows)
+
+
+def _value(item: object, key: str, default: Any = "") -> Any:
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _list_value(item: object, key: str) -> list[object]:
+    value = _value(item, key, [])
+    return value if isinstance(value, list) else []
 
 
 def _build_markdown_report(payload: dict[str, dict[str, object]]) -> str:
@@ -323,7 +601,9 @@ def _build_markdown_report(payload: dict[str, dict[str, object]]) -> str:
         if not signals:
             lines.append("- No signals in this section.")
         for signal in signals:
-            lines.append(f"- [{signal.score}] {signal.title} ({signal.source}) {signal.url}".rstrip())
+            title_text = signal.topic or signal.title
+            linked_title = f"[{title_text}]({signal.url})" if signal.url else title_text
+            lines.append(f"- {linked_title}: {signal.title} ({signal.source})")
         lines.append("")
     return "\n".join(lines)
 
@@ -334,16 +614,19 @@ def _render_project_details(projects: list[SignalRecord]) -> None:
     labels = [_project_name(signal) for signal in projects]
     selected = st.selectbox("Inspect project", labels, key="inspect-project")
     signal = projects[labels.index(selected)]
-    with st.expander("Project detail", expanded=True):
-        cols = st.columns(4)
-        cols[0].metric("Score", signal.score)
-        cols[1].metric("Stars", signal.metadata.get("stars", ""))
-        cols[2].metric("Language", signal.metadata.get("language", "") or "unknown")
-        cols[3].metric("Source", signal.source)
-        st.write(signal.summary or signal.title)
-        st.write(f"Suggested action: {_project_action(signal)}")
-        if signal.url:
-            st.markdown(f"[Open project]({signal.url})")
+    st.markdown(
+        project_detail_html(
+            _project_name(signal),
+            signal.score,
+            _format_count(signal.metadata.get("stars", "")),
+            str(signal.metadata.get("language", "") or "unknown"),
+            signal.source,
+            _public_text(signal.summary or signal.title),
+            _project_action(signal),
+            url=signal.url,
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _render_startup_idea_cards(page_payload: dict[str, object]) -> None:
@@ -351,46 +634,49 @@ def _render_startup_idea_cards(page_payload: dict[str, object]) -> None:
     gaps = list(page_payload.get("gap_clusters", []))
     if not analyses and not gaps:
         return
-    st.subheader("Startup Idea Cards")
+    _render_section_header("Top Gaps", "pain signals and product gaps")
     for index, analysis in enumerate(analyses[:5], start=1):
-        ideas = list(getattr(analysis, "startup_ideas", []))
-        patterns = list(getattr(analysis, "patterns", []))
+        ideas = _list_value(analysis, "startup_ideas")
+        patterns = _list_value(analysis, "patterns")
         idea = ideas[0] if ideas else None
         pattern = patterns[0] if patterns else None
-        title = getattr(idea, "idea", None) or getattr(analysis, "topic", f"Idea {index}")
-        with st.expander(f"{index}. {title}", expanded=index == 1):
-            if pattern:
-                st.write(f"Problem: {getattr(pattern, 'problem', '')}")
-                st.write(f"Evidence: {getattr(pattern, 'representative_quote', '')}")
-                cols = st.columns(3)
-                cols[0].metric("Complaints", getattr(pattern, "complaints", 0))
-                cols[1].metric("Pain", getattr(pattern, "pain_level", 0))
-                cols[2].metric("Score", getattr(idea, "score", 0) if idea else 0)
-            if idea:
-                st.write(f"Who pays / market: {getattr(idea, 'market_size', '')}")
-                st.write(f"Competition: {getattr(idea, 'competition_level', '')}")
-                st.write(f"MVP difficulty: {getattr(idea, 'technical_difficulty', '')}")
-            st.write(f"Next step: {getattr(analysis, 'recommended_action', '')}")
+        title = _value(idea, "idea", None) or _value(analysis, "topic", f"Idea {index}")
+        render_idea_card(
+            st,
+            title=str(title),
+            problem=str(_value(pattern, "problem", _value(analysis, "topic", "")) if pattern else _value(analysis, "topic", "")),
+            quote=str(_value(pattern, "representative_quote", "") if pattern else ""),
+            pain_level=int(_value(pattern, "pain_level", 5) if pattern else 5),
+            complaints=int(_value(pattern, "complaints", 0) if pattern else 0),
+            score=int(_value(idea, "score", 0) if idea else _value(analysis, "confidence", 0)),
+            sources=[str(source) for source in (_value(pattern, "sources", []) if pattern else [])],
+            next_step=str(_value(analysis, "recommended_action", "Validate the pain with five target users.")),
+            market=str(_value(idea, "market_size", "") if idea else ""),
+            competition=str(_value(idea, "competition_level", "") if idea else ""),
+            index=index,
+        )
     if not analyses:
         for index, gap in enumerate(gaps[:5], start=1):
-            with st.expander(f"{index}. {getattr(gap, 'startup_idea', 'Startup idea')}", expanded=index == 1):
-                st.write(f"Problem: {getattr(gap, 'problem', '')}")
-                st.write(f"Evidence: {getattr(gap, 'best_quote', '')}")
-                st.write(f"Sources: {', '.join(getattr(gap, 'sources', []))}")
+            render_idea_card(
+                st,
+                title=str(getattr(gap, "startup_idea", "Startup idea")),
+                problem=str(getattr(gap, "problem", "")),
+                quote=str(getattr(gap, "best_quote", "")),
+                pain_level=int(getattr(gap, "pain_level", 5)),
+                complaints=int(getattr(gap, "complaint_count", 0)),
+                score=int(getattr(gap, "score", 0)),
+                sources=[str(source) for source in getattr(gap, "sources", [])],
+                next_step="Run a focused landing-page or outreach validation test.",
+                index=index,
+            )
 
 
 def _category_distribution_frame(signals: list[SignalRecord]) -> pd.DataFrame:
-    if not signals:
-        return pd.DataFrame()
-    frame = _signals_to_frame(signals)
-    return frame.groupby("category", as_index=False).size().rename(columns={"size": "signals"})
+    return pd.DataFrame(compute_signal_analytics(signals).category_distribution)
 
 
 def _source_distribution_frame(signals: list[SignalRecord]) -> pd.DataFrame:
-    if not signals:
-        return pd.DataFrame()
-    frame = _signals_to_frame(signals)
-    return frame.groupby("source", as_index=False)["score"].mean().sort_values("score", ascending=False).head(12)
+    return pd.DataFrame(compute_signal_analytics(signals).source_distribution)
 
 
 def _apply_filters(signals: list[SignalRecord], filters: dict[str, Any] | None = None) -> list[SignalRecord]:
@@ -425,10 +711,14 @@ def _render_signal_explorer(
 ) -> None:
     filtered = _apply_filters(signals, filters)
     cols = st.columns(4)
-    cols[0].metric("Signals in view", len(filtered))
-    cols[1].metric("Avg score", f"{sum(signal.score for signal in filtered) / max(len(filtered), 1):.1f}")
-    cols[2].metric("Sources", len({signal.source for signal in filtered}))
-    cols[3].metric("Topics", len({signal.topic for signal in filtered}))
+    with cols[0]:
+        render_glow_metric(st, "Signals in View", len(filtered), "teal")
+    with cols[1]:
+        render_glow_metric(st, "Sources", len({signal.source for signal in filtered}), "sky")
+    with cols[2]:
+        render_glow_metric(st, "Topics", len({signal.topic for signal in filtered}), "purple")
+    with cols[3]:
+        render_glow_metric(st, "Categories", len({signal.category for signal in filtered}), "emerald")
 
     if not filtered:
         st.info("No signals match this view. Clear filters, enable the related source group, or refresh live data.")
@@ -436,25 +726,36 @@ def _render_signal_explorer(
             st.caption("Sources checked for this view")
             health_frame = _source_health_frame(page_payload)
             if not health_frame.empty:
-                st.table(health_frame.head(12))
+                _render_table(health_frame.head(12))
         return
 
-    st.subheader("Visible Data")
-    st.dataframe(_signal_preview_frame(filtered), width="stretch", hide_index=True, column_config=_signal_table_column_config())
+    _render_section_header("Top Signals", "ranked by relevance")
+    _render_signal_cards(filtered, limit=4)
+    _render_table(_signal_preview_frame(filtered))
 
+    _render_section_header("Charts", "distribution and coverage")
     chart_cols = st.columns(2)
     category_frame = _category_distribution_frame(filtered)
     if not category_frame.empty:
-        chart_cols[0].bar_chart(category_frame, x="category", y="signals")
+        chart_cols[0].plotly_chart(
+            radar_bar_chart(category_frame, "category", "signals", COLORS["teal"], title="Signal Distribution"),
+            width="stretch",
+            key=f"{key_prefix}-category-distribution",
+        )
     source_frame = _source_distribution_frame(filtered)
     if not source_frame.empty:
-        chart_cols[1].bar_chart(source_frame, x="source", y="score")
+        chart_cols[1].plotly_chart(
+            radar_bar_chart(source_frame.head(12), "source", "signals", COLORS["purple"], title="Source Coverage"),
+            width="stretch",
+            key=f"{key_prefix}-source-strength",
+        )
 
+    _render_section_header("Visible Data", "exportable table")
     frame = _signal_display_frame(filtered)
-    st.dataframe(frame, width="stretch", hide_index=True, column_config=_signal_table_column_config())
+    _render_table(frame)
     st.download_button(
         "Download CSV",
-        frame.to_csv(index=False).encode("utf-8"),
+        _export_visible_frame(frame).to_csv(index=False).encode("utf-8"),
         file_name="internet-radar-signals.csv",
         mime="text/csv",
         key=f"download-{key_prefix}",
@@ -462,61 +763,110 @@ def _render_signal_explorer(
     selected = st.selectbox("Inspect signal", [signal.title for signal in filtered], key=f"inspect-{key_prefix}")
     signal = next(item for item in filtered if item.title == selected)
     with st.expander("Signal detail", expanded=False):
-        st.json(signal.model_dump(mode="json"))
+        st.json(_public_signal_json(signal))
+
+
+def _public_signal_json(signal: SignalRecord) -> dict[str, object]:
+    data = signal.model_dump(mode="json")
+    data.pop("score", None)
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        data["metadata"] = {key: value for key, value in metadata.items() if "score" not in str(key).lower()}
+    return dict(_public_json(data))
 
 
 def render_page(page_key: str, page_payload: dict[str, object], filters: dict[str, Any] | None = None) -> None:
-    st.subheader(str(page_payload["title"]))
-    st.caption(str(page_payload["description"]))
+    _render_section_header(str(page_payload["title"]).upper(), str(page_payload["description"]))
     signals = list(page_payload.get("signals", []))
+    if page_key != "profile":
+        _render_page_metric_strip(signals)
 
     if page_key == "profile":
         profile = dict(page_payload.get("profile", {}))
         columns = st.columns(3)
-        columns[0].metric("Skills", len(profile.get("skills", [])))
-        columns[1].metric("Interests", len(profile.get("interests", [])))
-        columns[2].metric("Alert threshold", int(profile.get("alert_threshold", 0)))
-        st.subheader("Alert Readiness")
-        st.dataframe(_alert_readiness_frame(), width="stretch", hide_index=True)
-        st.json(profile)
+        with columns[0]:
+            render_glow_metric(st, "Skills", len(profile.get("skills", [])), "teal")
+        with columns[1]:
+            render_glow_metric(st, "Interests", len(profile.get("interests", [])), "purple")
+        with columns[2]:
+            render_glow_metric(st, "Alert Channels", len(profile.get("notification_channels", [])), "amber")
+        _render_section_header("Alert Readiness")
+        _render_table(_alert_readiness_frame())
+        outbox_frame = _alert_outbox_frame()
+        if not outbox_frame.empty:
+            _render_section_header("Alert Outbox", "latest delivery attempts")
+            _render_table(outbox_frame)
+        with st.expander("Profile JSON", expanded=False):
+            st.json(profile)
         personalized = list(page_payload.get("personalized_signals", []))
         if personalized:
-            st.subheader("Personalized Feed")
+            _render_section_header("Personalized Feed")
             _render_signal_explorer(personalized, filters, key_prefix="profile-personalized", page_payload=page_payload)
         return
 
     if page_key == "radar_search":
         st.text_input("Search collected signals", value=str((filters or {}).get("query") or "browser agents"), key="radar-search-query")
-        st.json(page_payload.get("query_analysis", {}))
+        with st.expander("Query Analysis", expanded=True):
+            st.json(_public_json(page_payload.get("query_analysis", {})))
 
     if page_key == "briefing":
         analysis_artifacts = page_payload.get("analysis_artifacts", {})
         if isinstance(analysis_artifacts, dict) and analysis_artifacts:
             st.caption(f"Pipeline analysis: {analysis_artifacts.get('analysis_route', page_payload.get('llm_status', 'unknown'))}")
         signal_summary = page_payload.get("signal_summary")
-        if signal_summary:
-            st.subheader("Signal Summary")
-            st.write(getattr(signal_summary, "headline", ""))
-            st.write(getattr(signal_summary, "next_action", ""))
         daily_briefing = page_payload.get("daily_briefing", {})
-        if isinstance(daily_briefing, dict) and daily_briefing:
-            st.subheader("Daily Brief")
-            st.write(str(daily_briefing.get("narrative", "")))
+        headline = str(_value(signal_summary, "headline", "") if signal_summary else "")
+        if not headline and isinstance(daily_briefing, dict):
+            headline = str(daily_briefing.get("headline") or "")
+        if not headline:
+            headline = "High-signal opportunities across your sources"
+        narrative = ""
+        if isinstance(daily_briefing, dict):
+            narrative = str(daily_briefing.get("narrative") or "")
+        if not narrative and signal_summary:
+            narrative = str(_value(signal_summary, "next_action", ""))
+        render_briefing_hero(st, _public_text(headline), _public_text(narrative), len(list(page_payload.get("alerts", []))))
+        llm_insight = page_payload.get("llm_generated_insight", {})
+        if isinstance(llm_insight, dict) and llm_insight:
+            _render_section_header("LLM Insight")
+            public_insight = _public_json(llm_insight)
+            st.markdown(insight_card_html(public_insight if isinstance(public_insight, dict) else {}), unsafe_allow_html=True)
         alerts = list(page_payload.get("alerts", []))
         if alerts:
-            st.subheader("Act Now")
-            for alert in alerts[:5]:
-                st.markdown(f"**{alert.title}**")
-                st.caption(f"{alert.kind} | score {alert.score} | channels: {', '.join(alert.channels)}")
-                st.code(alert.body)
+            _render_section_header("Act Now", f"{len(alerts)} alert candidates")
+            alert_columns = st.columns(2)
+            for index, alert in enumerate(alerts[:6]):
+                with alert_columns[index % 2]:
+                    st.markdown(
+                        alert_card_html(alert.title, alert.kind, alert.score, _public_text(alert.body), alert.channels),
+                        unsafe_allow_html=True,
+                    )
 
     if page_key == "github_radar":
         projects = _project_signals(signals)
-        st.subheader("Projects")
         if projects:
+            _render_section_header("Velocity Spotlight", "repository and package momentum")
+            spotlight = projects[:3]
+            spotlight_cols = st.columns(len(spotlight))
+            dates = ["4d", "3d", "2d", "1d", "now"]
+            for index, (column, signal) in enumerate(zip(spotlight_cols, spotlight, strict=False)):
+                with column:
+                    render_glow_metric(
+                        st,
+                        _project_name(signal),
+                        _format_count(signal.metadata.get("stars", signal.score)),
+                        "teal" if signal.source == "GitHub Trending" else "sky",
+                    )
+                    st.plotly_chart(
+                        velocity_sparkline(dates, _sparkline_values(signal), COLORS["teal"], title="velocity"),
+                        width="stretch",
+                        key=f"github-velocity-{index}",
+                    )
+            _render_section_header("Trending Projects")
             project_frame = _projects_to_frame(projects)
-            st.dataframe(project_frame.head(12), width="stretch", hide_index=True, column_config=_signal_table_column_config())
-            st.dataframe(project_frame, width="stretch", hide_index=True, column_config=_signal_table_column_config())
+            _render_table(project_frame.head(12))
+            _render_signal_cards(projects, limit=3)
+            _render_section_header("Project Detail")
             _render_project_details(projects)
         else:
             st.info("No project repository signals match the current filters. Clear the sidebar filters or enable live collection.")
@@ -524,71 +874,123 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
     if page_key == "skill_radar":
         recommendations = list(page_payload.get("skill_recommendations", []))
         if recommendations:
-            st.subheader("Learning Path")
-            st.dataframe(_skill_recommendations_to_frame(recommendations), width="stretch", hide_index=True)
+            _render_section_header("Learning Path", "skills heating up across jobs and code")
+            _render_table(_skill_recommendations_to_frame(recommendations))
 
     if page_key == "trend_velocity":
         historical = list(page_payload.get("historical_trends", []))
-        if historical:
-            st.subheader("Historical Velocity")
-            st.dataframe(_objects_to_frame(historical), width="stretch", hide_index=True)
         agreements = list(page_payload.get("source_agreements", []))
         if agreements:
-            st.subheader("Source Agreement")
-            st.dataframe(_source_agreements_to_frame(agreements), width="stretch", hide_index=True)
+            _render_section_header("Source Agreement", "cross-source confidence")
+            _render_table(_source_agreements_to_frame(agreements))
+            for agreement in agreements[:4]:
+                st.markdown(
+                    signal_card_html(
+                        str(getattr(agreement, "topic", "Trend")),
+                        ", ".join(getattr(agreement, "sources", [])[:3]),
+                        "trend",
+                        int(getattr(agreement, "score", 0)),
+                        summary=f"{getattr(agreement, 'source_count', 0)}/{getattr(agreement, 'known_source_count', 0)} sources confirming.",
+                        action=str(getattr(agreement, "verdict", "WATCH")),
+                    ),
+                    unsafe_allow_html=True,
+                )
+        if historical:
+            _render_section_header("Historical Velocity")
+            _render_table(_objects_to_frame(historical))
         correlations = list(page_payload.get("trend_correlations", []))
         if correlations:
-            st.subheader("Trend Correlations")
-            st.dataframe(_objects_to_frame(correlations), width="stretch", hide_index=True)
+            _render_section_header("Trend Correlations")
+            _render_table(_objects_to_frame(correlations))
         predictions = list(page_payload.get("trend_predictions", []))
         if predictions:
-            st.subheader("Trend Predictions")
-            st.dataframe(_objects_to_frame(predictions), width="stretch", hide_index=True)
+            _render_section_header("Trend Predictions")
+            _render_table(_objects_to_frame(predictions))
 
     if page_key == "hackathon_radar":
+        if signals:
+            _render_section_header("Apply Now", "fresh opportunities")
+            card_cols = st.columns(2)
+            for index, signal in enumerate(signals[:4]):
+                prize = signal.metadata.get("prize_pool") or signal.metadata.get("prize") or ""
+                days_left = signal.metadata.get("days_left") or signal.metadata.get("deadline_days") or ""
+                summary_bits = [signal.summary or signal.topic]
+                if prize:
+                    summary_bits.append(f"Prize: {prize}")
+                if days_left != "":
+                    summary_bits.append(f"Deadline: {days_left} days")
+                with card_cols[index % 2]:
+                    st.markdown(
+                        signal_card_html(
+                            signal.title,
+                            signal.source,
+                            signal.category,
+                            signal.score,
+                            summary=_public_text(" | ".join(str(bit) for bit in summary_bits if bit)),
+                            url=signal.url,
+                            action="APPLY NOW" if signal.score >= 80 else "WATCH",
+                        ),
+                        unsafe_allow_html=True,
+                    )
         predictions = list(page_payload.get("crowd_predictions", []))
         if predictions:
-            st.subheader("Crowd Prediction")
-            st.dataframe(_objects_to_frame(predictions), width="stretch", hide_index=True)
+            _render_section_header("Crowd Prediction")
+            _render_table(_objects_to_frame(predictions))
+
+    if page_key == "internship_radar" and signals:
+        _render_section_header("Freshness Priority")
+        buckets = _freshness_bucket_counts(signals)
+        bucket_cols = st.columns(3)
+        for column, (label, count) in zip(bucket_cols, buckets.items(), strict=True):
+            with column:
+                render_glow_metric(st, label, count, "sky")
+        _render_section_header("Apply Today", "fresh jobs and skill match")
+        _render_signal_cards(signals, limit=5)
 
     if page_key == "research_radar":
         academic_signals = list(page_payload.get("academic_signals", []))
+        if signals:
+            _render_section_header("Academic Momentum")
+            _render_signal_cards(signals, limit=4)
         if academic_signals:
-            st.subheader("Academic Momentum")
-            st.dataframe(_objects_to_frame(academic_signals), width="stretch", hide_index=True)
+            _render_section_header("Research Detail")
+            _render_table(_objects_to_frame(academic_signals))
 
     if page_key == "funding_radar":
         funding_signals = list(page_payload.get("funding_signals", []))
+        if signals:
+            _render_section_header("Market Validation")
+            _render_signal_cards(signals, limit=4)
         if funding_signals:
-            st.subheader("Funding Validation")
-            st.dataframe(_objects_to_frame(funding_signals), width="stretch", hide_index=True)
+            _render_section_header("Funding Detail")
+            _render_table(_objects_to_frame(funding_signals))
 
     if page_key in {"startup_gaps", "app_store_pain"}:
         if page_key == "startup_gaps":
             _render_startup_idea_cards(page_payload)
         analyses = list(page_payload.get("gap_analyses", []))
         if page_key == "startup_gaps" and analyses:
-            st.subheader("Gap Analysis")
-            st.dataframe(_objects_to_frame(analyses), width="stretch", hide_index=True)
+            _render_section_header("Gap Analysis")
+            _render_table(_objects_to_frame(analyses))
         validations = list(page_payload.get("idea_validations", []))
         if page_key == "startup_gaps" and validations:
-            st.subheader("Idea Validation")
-            st.dataframe(_objects_to_frame(validations), width="stretch", hide_index=True)
+            _render_section_header("Idea Validation")
+            _render_table(_objects_to_frame(validations))
         gap_key = "pain_clusters" if page_key == "app_store_pain" else "gap_clusters"
         gaps = list(page_payload.get(gap_key, []))
         if gaps:
-            st.subheader("Pain Clusters")
-            st.dataframe(_gaps_to_frame(gaps), width="stretch", hide_index=True)
+            _render_section_header("Pain Clusters")
+            _render_table(_gaps_to_frame(gaps))
         semantic_clusters = list(page_payload.get("semantic_clusters", []))
         if semantic_clusters:
-            st.subheader("Semantic Clusters")
-            st.dataframe(_semantic_clusters_to_frame(semantic_clusters), width="stretch", hide_index=True)
+            _render_section_header("Semantic Clusters")
+            _render_table(_semantic_clusters_to_frame(semantic_clusters))
 
     if page_key == "community_pulse":
         summary = page_payload.get("sentiment_summary", {})
         if isinstance(summary, dict) and any(int(value) for value in summary.values()):
-            st.subheader("Sentiment Summary")
-            st.dataframe(_sentiment_to_frame(summary), width="stretch", hide_index=True)
+            _render_section_header("Sentiment Summary")
+            _render_table(_sentiment_to_frame(summary))
 
     _render_signal_explorer(signals, filters, key_prefix=page_key, page_payload=page_payload)
 
@@ -596,21 +998,34 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
 def render_dashboard(payload: dict[str, dict[str, object]], filters: dict[str, Any] | None = None) -> None:
     top = payload["briefing"]
     collection = dict(top.get("collection", {}))
+    alerts = list(top.get("alerts", []))
+    top_signals = list(top.get("signals", []))
     cols = st.columns(4)
-    cols[0].metric("Active sources", int(top["active_sources"]))
-    cols[1].metric("Signals", int(top["signals_24h"]))
-    cols[2].metric("Registered sources", len(SOURCE_REGISTRY))
-    cols[3].metric("Enabled by default", len(enabled_sources()))
+    with cols[0]:
+        render_glow_metric(st, "Active Sources", int(top["active_sources"]), "teal")
+    with cols[1]:
+        render_glow_metric(st, "Signals", int(top["signals_24h"]), "purple")
+    with cols[2]:
+        render_glow_metric(st, "Act Now", len(alerts), "amber")
+    with cols[3]:
+        render_glow_metric(st, "Categories", len({signal.category for signal in top_signals}), "emerald")
 
-    st.write(f"LLM route: `{top['llm_status']}`")
+    st.caption(f"LLM route: `{top['llm_status']}`")
     freshness_cols = st.columns(4)
-    freshness_cols[0].metric("Mode", str(collection.get("mode", "unknown")))
-    freshness_cols[1].metric("Payload", "cache" if collection.get("loaded_from_cache") else "fresh")
-    freshness_cols[2].metric("Collection seconds", f"{float(collection.get('duration_seconds') or 0):.1f}")
-    freshness_cols[3].metric("Generated", _format_generated_at(collection.get("generated_at")))
+    with freshness_cols[0]:
+        render_glow_metric(st, "Mode", str(collection.get("mode", "unknown")), "sky")
+    with freshness_cols[1]:
+        render_glow_metric(st, "Payload", "cache" if collection.get("loaded_from_cache") else "fresh", "emerald")
+    with freshness_cols[2]:
+        render_glow_metric(st, "Collection Sec", f"{float(collection.get('duration_seconds') or 0):.1f}", "orange")
+    with freshness_cols[3]:
+        render_glow_metric(st, "Generated", _format_generated_at(collection.get("generated_at")), "teal")
     free_only = os.getenv("INTERNET_RADAR_FREE_ONLY", "0") == "1"
     with st.expander("Free-only Guardrails", expanded=free_only):
-        st.table(_free_only_guardrails_frame(free_only))
+        _render_table(_free_only_guardrails_frame(free_only))
+    readiness = _make_real_readiness_frame(top)
+    with st.expander("Make It Real Readiness", expanded=bool((readiness["status"] == "blocked").any())):
+        _render_table(readiness)
     st.download_button(
         "Download Daily Report",
         _build_markdown_report(payload).encode("utf-8"),
@@ -618,17 +1033,18 @@ def render_dashboard(payload: dict[str, dict[str, object]], filters: dict[str, A
         mime="text/markdown",
         key="download-daily-report",
     )
-    st.subheader("Top Signals Preview")
-    st.dataframe(
-        _signal_preview_frame(list(top.get("signals", []))),
-        width="stretch",
-        hide_index=True,
-        column_config=_signal_table_column_config(),
-    )
+    _render_section_header("Top Signals Preview", "balanced across sources")
+    _render_signal_cards(top_signals, limit=4)
+    _render_table(_signal_preview_frame(top_signals))
     health_frame = _source_health_frame(top)
     if not health_frame.empty:
         with st.expander("Source Health", expanded=True):
-            st.dataframe(health_frame, width="stretch", hide_index=True)
+            status_rows = "".join(
+                f"<div style='margin:0.35rem 0;'>{source_status_html(row.status)} <span style='color:#8B949E;margin-left:0.5rem;'>{row.source}</span></div>"
+                for row in health_frame.head(18).itertuples(index=False)
+            )
+            st.markdown(status_rows, unsafe_allow_html=True)
+            _render_table(health_frame)
     tabs = st.tabs([page.title for page in PAGE_DEFINITIONS])
     for tab, page in zip(tabs, PAGE_DEFINITIONS, strict=True):
         with tab:
@@ -653,7 +1069,10 @@ def _format_generated_at(value: object) -> str:
 def render_page_entry(page_key: str) -> None:
     page = next((definition for definition in PAGE_DEFINITIONS if definition.key == page_key), PAGE_DEFINITIONS[0])
     st.set_page_config(page_title=f"Internet Radar v2 - {page.title}", layout="wide")
+    inject_custom_css()
     st.title(page.title)
+    with st.sidebar:
+        _render_sidebar_navigation()
     payload = load_payload(use_live_network=os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1")
     render_page(page.key, payload[page.key])
 
@@ -721,31 +1140,57 @@ def _maybe_start_background_refresh(use_live_network: bool) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Internet Radar v2", layout="wide")
+    inject_custom_css()
     st.title("Internet Radar v2")
     st.caption("Local-first signal intelligence across code, social, news, jobs, research, finance, search, and app stores.")
 
     with st.sidebar:
-        st.header("Collection")
+        _render_sidebar_navigation()
+        st.markdown(
+            """
+            <div style="text-align:center;padding:1rem 0 1.5rem;">
+                <div style="font-size:1.5rem;font-weight:900;letter-spacing:0;">
+                    <span style="color:#14B8A6;">INTERNET</span>
+                    <span style="color:#F3F6FA;"> RADAR</span>
+                </div>
+                <div style="font-size:0.65rem;color:#484F58;text-transform:uppercase;letter-spacing:0.2em;margin-top:4px;">
+                    SIGNAL INTELLIGENCE PLATFORM
+                </div>
+            </div>
+            <hr style="border:none;border-top:1px solid #21262D;margin:0;">
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="micro-label" style="margin:1.5rem 0 0.5rem;">COLLECTION</div>', unsafe_allow_html=True)
         default_live = os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1"
-        use_live = st.toggle("Use live network collectors", value=default_live)
+        use_live = st.toggle("LIVE NETWORK", value=default_live)
         free_only = os.getenv("INTERNET_RADAR_FREE_ONLY", "0") == "1"
-        st.caption(f"Mode: {'free-only' if free_only else 'all configured'}")
-        st.caption("Off uses deterministic sample signals. On calls no-key public APIs and falls back on errors.")
-        if st.button("Refresh data"):
+        st.caption("FREE-ONLY" if free_only else "ALL CONFIGURED")
+        if st.button("REFRESH DATA", use_container_width=True):
             st.session_state["refresh_token"] = int(st.session_state.get("refresh_token", 0)) + 1
             load_payload.clear()
-        st.header("Source Groups")
-        source_groups = st.multiselect("Visible groups", CATEGORIES, default=CATEGORIES)
-        st.header("Filters")
+        st.markdown('<div class="micro-label" style="margin:1.5rem 0 0.5rem;">SOURCE GROUPS</div>', unsafe_allow_html=True)
+        source_groups = st.multiselect(
+            "VISIBLE GROUPS",
+            CATEGORIES,
+            default=CATEGORIES,
+            format_func=lambda value: str(value).upper(),
+        )
+        st.markdown('<div class="micro-label" style="margin:1.5rem 0 0.5rem;">FILTERS</div>', unsafe_allow_html=True)
         categories = st.multiselect(
-            "Categories",
+            "CATEGORIES",
             CATEGORIES,
             default=[],
+            format_func=lambda value: str(value).upper(),
         )
-        min_score = st.slider("Minimum score", min_value=0, max_value=100, value=0, step=5)
-        query = st.text_input("Search text", value="")
+        query = st.text_input("SEARCH", value="", placeholder="E.G. BROWSER AGENTS")
         source_options = sorted({source.name for source in SOURCE_REGISTRY})
-        source = st.selectbox("Source", [""] + source_options, index=0)
+        source = st.selectbox(
+            "SOURCE",
+            [""] + source_options,
+            index=0,
+            format_func=lambda value: "ALL" if value == "" else str(value).upper(),
+        )
 
     refresh_token = int(st.session_state.get("refresh_token", 0))
     payload = load_payload(use_live_network=use_live, refresh_token=refresh_token)
@@ -755,7 +1200,7 @@ def main() -> None:
         filters={
             "categories": categories,
             "source_groups": source_groups,
-            "min_score": min_score,
+            "min_score": 0,
             "query": query,
             "source": source,
         },

@@ -126,6 +126,69 @@ def test_pipeline_persists_snapshots_historical_trends_and_analysis_artifacts(tm
     assert RadarStore(db_path).metric_history(signal_id="repo:agent", metric="stars")[0].value == 1300
 
 
+def test_pipeline_analysis_can_generate_bounded_llm_insight(monkeypatch):
+    from internet_radar.brain.llm_router import LLMChoice
+    from internet_radar.brain.pipeline_analysis import build_analysis_artifacts
+
+    monkeypatch.setenv("INTERNET_RADAR_ENABLE_LLM_ANALYSIS", "1")
+    calls: list[dict[str, object]] = []
+
+    class FakeRouter:
+        def route(self, task, content_length):
+            return LLMChoice(provider="ollama", model="fake-local", reason=f"test {task}")
+
+        def classify_signal(self, text, allow_network=True):
+            return {"topic": "browser agents", "sentiment": "negative", "confidence": 91}
+
+        def generate_json(self, task, prompt, content_length=None, allow_network=True):
+            calls.append(
+                {
+                    "task": task,
+                    "prompt": prompt,
+                    "content_length": content_length,
+                    "allow_network": allow_network,
+                }
+            )
+            return self.route(task, content_length or len(prompt)), {
+                "headline": "Browser agents need better debugging",
+                "narrative": "Complaints and code momentum point to a narrow devtools gap.",
+                "opportunities": ["Build a browser-agent debugging copilot"],
+                "risks": ["Validate beyond developer forums"],
+                "actions": ["Interview five teams using browser automation"],
+                "confidence": 86,
+            }
+
+    artifacts = build_analysis_artifacts(
+        [
+            SignalRecord(
+                id="gap",
+                topic="browser agents",
+                title="Users complain browser agents are hard to debug",
+                source="Reddit JSON",
+                category="social",
+                score=88,
+                summary="Manual setup pain and opaque browser automation failures.",
+                metadata={"frustration_score": 90},
+            )
+        ],
+        active_sources=4,
+        llm_status="ollama:fake-local",
+        profile=UserProfile(skills=["python"]),
+        router=FakeRouter(),
+    )
+
+    insight = artifacts["llm_generated_insight"]
+
+    assert calls
+    assert calls[0]["task"] == "daily_briefing"
+    assert calls[0]["allow_network"] is True
+    assert "Users complain browser agents" in str(calls[0]["prompt"])
+    assert insight["status"] == "generated"
+    assert insight["headline"] == "Browser agents need better debugging"
+    assert insight["opportunities"] == ["Build a browser-agent debugging copilot"]
+    assert insight["confidence"] == 86
+
+
 def test_scheduler_uses_persistent_sqlite_job_store(tmp_path):
     from internet_radar.scheduler.runner import build_scheduler
 
@@ -158,8 +221,22 @@ def test_profile_is_more_personalized_and_threshold_is_seventy():
     profile = load_user_profile()
 
     assert profile.alert_threshold == 70
-    assert {"python", "streamlit", "automation", "github", "data analysis"} <= set(profile.skills)
+    assert {
+        "python",
+        "ai",
+        "streamlit",
+        "automation",
+        "robotics",
+        "competitive coding",
+        "nextjs",
+        "fastapi",
+    } <= set(profile.skills)
+    assert {"browser agents", "local llm", "mcp", "internships", "hackathons", "ai agents", "open source", "yc startups"} <= set(
+        profile.interests
+    )
     assert "find internships with low competition" in profile.goals
+    assert {"cryptocurrency", "nft", "web3"} <= set(profile.blocked_topics)
+    assert {"ntfy", "telegram"} <= set(profile.notification_channels)
 
 
 def test_gap_patterns_cover_more_actionable_pain_categories():
@@ -168,7 +245,29 @@ def test_gap_patterns_cover_more_actionable_pain_categories():
     patterns = load_gap_patterns()
 
     assert {"privacy", "onboarding", "integration", "pricing"} <= set(patterns["categories"])
-    assert "no api" in patterns["phrases"]
+    expected_patterns = {
+        "too expensive",
+        "overpriced",
+        "pricing is ridiculous",
+        "free alternative",
+        "open source alternative",
+        "why doesn't this exist",
+        "i wish there was",
+        "someone should build",
+        "there's no good",
+        "still no solution",
+        "keeps crashing",
+        "terrible ux",
+        "documentation sucks",
+        "support is awful",
+        "abandoned project",
+        "takes too long",
+        "too many steps",
+        "should be automated",
+        "waste of time",
+        "manual process",
+    }
+    assert expected_patterns <= set(patterns["phrases"]) | set(patterns["pain_terms"])
     assert patterns["weights"]["privacy"] >= 3
 
 
@@ -181,6 +280,97 @@ def test_reddit_api_collector_is_added_only_when_free_credentials_exist(monkeypa
     names = {collector.name for collector in default_collectors(use_live_network=True)}
 
     assert "Reddit API" in names
+
+
+def test_reddit_json_collector_scans_multiple_no_key_subreddits_without_oauth():
+    from internet_radar.collectors.live import RedditJSONCollector
+
+    calls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, subreddit: str) -> None:
+            self.subreddit = subreddit
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "data": {
+                    "children": [
+                        {
+                            "data": {
+                                "id": f"{self.subreddit}-1",
+                                "title": f"{self.subreddit} developer pain around browser agents",
+                                "ups": 85,
+                                "subreddit": self.subreddit,
+                                "permalink": f"/r/{self.subreddit}/comments/1/topic/",
+                            }
+                        }
+                    ]
+                }
+            }
+
+    def fake_get(url, **kwargs):
+        calls.append(url)
+        subreddit = url.split("/r/", 1)[1].split("/", 1)[0]
+        return FakeResponse(subreddit)
+
+    collector = RedditJSONCollector(subreddits=["LocalLLaMA", "MachineLearning"])
+    collector.http_get = fake_get
+    collector.rate_limiter = None
+
+    records = collector.collect()
+
+    assert calls == [
+        "https://www.reddit.com/r/LocalLLaMA/hot.json",
+        "https://www.reddit.com/r/MachineLearning/hot.json",
+    ]
+    assert [record.metadata["subreddit"] for record in records] == ["LocalLLaMA", "MachineLearning"]
+
+
+def test_reddit_oauth_verifier_reports_valid_credentials_without_collecting_posts():
+    from internet_radar.collectors.live import verify_reddit_oauth
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"access_token": "token", "token_type": "bearer", "expires_in": 3600}
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse()
+
+    result = verify_reddit_oauth(client_id="client", client_secret="secret", http_post=fake_post)
+
+    assert calls[0][0] == "https://www.reddit.com/api/v1/access_token"
+    assert calls[0][1]["auth"] == ("client", "secret")
+    assert result == {
+        "configured": True,
+        "valid": True,
+        "detail": "token acquired",
+        "token_type": "bearer",
+    }
+
+
+def test_reddit_oauth_verifier_reports_missing_credentials_without_network():
+    from internet_radar.collectors.live import verify_reddit_oauth
+
+    calls: list[object] = []
+
+    result = verify_reddit_oauth(client_id="", client_secret="", http_post=lambda *args, **kwargs: calls.append(args))
+
+    assert calls == []
+    assert result == {
+        "configured": False,
+        "valid": False,
+        "detail": "missing REDDIT_CLIENT_ID or REDDIT_CLIENT_SECRET",
+        "token_type": "",
+    }
 
 
 def test_dashboard_payload_passes_through_pipeline_operational_analysis():
@@ -216,3 +406,32 @@ def test_dashboard_payload_passes_through_pipeline_operational_analysis():
 
     assert payload["trend_velocity"]["historical_trends"][0].metric == "stars"
     assert payload["briefing"]["analysis_artifacts"]["daily_briefing"]["headline"] == "browser agents"
+
+
+def test_dashboard_payload_prefers_pipeline_analysis_artifacts():
+    from internet_radar.dashboard_data import build_dashboard_payload
+
+    artifacts = {
+        "signal_summary": {"headline": "Pipeline summary", "next_action": "Act from cached analysis."},
+        "classifications": [{"signal_id": "repo:agent", "topic": "pipeline topic"}],
+        "gap_analyses": [{"topic": "pipeline gap", "startup_ideas": [{"idea": "Build the pipeline idea"}]}],
+        "trend_predictions": [{"topic": "pipeline trend", "confidence": 91}],
+        "idea_validations": [{"idea": "Pipeline idea", "score": 82}],
+        "daily_briefing": {"headline": "Pipeline brief", "narrative": "Use the pipeline-generated brief."},
+        "llm_generated_insight": {"headline": "Pipeline LLM insight", "status": "generated"},
+    }
+    payload = build_dashboard_payload(
+        [SignalRecord(id="repo:agent", topic="browser agents", title="Browser agent repo", source="GitHub Search", category="code")],
+        profile=UserProfile(),
+        analysis_artifacts=artifacts,
+    )
+
+    briefing = payload["briefing"]
+
+    assert briefing["signal_summary"] == artifacts["signal_summary"]
+    assert briefing["classifications"] == artifacts["classifications"]
+    assert briefing["gap_analyses"] == artifacts["gap_analyses"]
+    assert briefing["trend_predictions"] == artifacts["trend_predictions"]
+    assert briefing["idea_validations"] == artifacts["idea_validations"]
+    assert briefing["daily_briefing"] == artifacts["daily_briefing"]
+    assert briefing["llm_generated_insight"] == artifacts["llm_generated_insight"]

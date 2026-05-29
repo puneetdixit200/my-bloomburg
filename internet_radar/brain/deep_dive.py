@@ -26,7 +26,6 @@ def build_deep_dive(query: str, signals: list[SignalRecord], router: LLMRouter |
     router = router or LLMRouter()
     route = router.route("gap_analysis", _content_length(query, signals))
     sources = _ordered_sources(signals)
-    top_score = max((signal.score for signal in signals), default=0)
     categories = sorted({signal.category for signal in signals})
     painful = [signal for signal in signals if _pain_score(signal) >= 45]
     research = [signal for signal in signals if signal.category == "research"]
@@ -34,7 +33,7 @@ def build_deep_dive(query: str, signals: list[SignalRecord], router: LLMRouter |
 
     executive_summary = (
         f"{query} has {len(signals)} signals across {len(sources)} sources"
-        f" with top score {top_score}. Categories: {', '.join(categories) or 'none'}."
+        f". Categories: {', '.join(categories) or 'none'}."
     )
     opportunities = _opportunities(query, painful, research, funding)
     risks = _risks(signals, painful)

@@ -52,6 +52,28 @@ def test_online_llm_client_builds_provider_requests_without_real_network(monkeyp
     assert calls[0]["json"]["model"] == "llama-3.3-70b-versatile"
 
 
+def test_llm_router_generate_json_uses_selected_local_model_without_real_network():
+    from internet_radar.brain.llm_router import LLMRouter
+
+    calls: list[str] = []
+
+    class FakeOllama:
+        def available_models(self):
+            return ["qwen2.5:0.5b"]
+
+        def generate_json(self, prompt):
+            calls.append(prompt)
+            return {"headline": "LLM generated insight", "confidence": 88}
+
+    router = LLMRouter(ollama_client=FakeOllama())
+
+    choice, result = router.generate_json("daily_briefing", "Return JSON for these signals.")
+
+    assert (choice.provider, choice.model) == ("ollama", "qwen2.5:0.5b")
+    assert result == {"headline": "LLM generated insight", "confidence": 88}
+    assert calls == ["Return JSON for these signals."]
+
+
 def test_deep_dive_report_summarizes_opportunities_risks_and_actions():
     from internet_radar.brain.deep_dive import build_deep_dive
     from internet_radar.brain.llm_router import LLMRouter

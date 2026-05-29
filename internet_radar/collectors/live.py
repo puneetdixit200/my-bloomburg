@@ -15,11 +15,13 @@ import requests
 import yaml
 
 from internet_radar.collectors.base import HTTPCollector
+from internet_radar.collectors.focused_crawler import FocusedWebCrawlerCollector
 from internet_radar.special.radar import build_special_signals
 from internet_radar.storage.models import SignalRecord
 
 
 DEFAULT_TOPICS = ["browser agents", "local llm", "mcp", "streamlit", "agentic ai"]
+DEFAULT_REDDIT_SUBREDDITS = ["LocalLLaMA", "MachineLearning", "OpenAI", "learnpython", "webdev"]
 HttpPost = Callable[..., Any]
 
 
@@ -1725,17 +1727,72 @@ class HNAlgoliaCollector(HTTPCollector):
 
 
 class RedditJSONCollector(HTTPCollector):
-    def __init__(self, subreddit: str = "LocalLLaMA") -> None:
+    def __init__(self, subreddit: str | None = None, subreddits: list[str] | None = None) -> None:
         super().__init__(name="Reddit JSON", category="social")
-        self.subreddit = subreddit
+        configured = subreddits or _reddit_subreddits_from_env()
+        if subreddit:
+            configured = [subreddit]
+        self.subreddits = configured or DEFAULT_REDDIT_SUBREDDITS
 
     def collect(self) -> list[SignalRecord]:
-        try:
-            data = self.get_json(f"https://www.reddit.com/r/{self.subreddit}/hot.json", limit=8)
-            children = data.get("data", {}).get("children", [])  # type: ignore[union-attr]
-            return parse_reddit_children(list(children))
-        except Exception:
-            return sample_signals("social")
+        records: list[SignalRecord] = []
+        for subreddit in self.subreddits:
+            try:
+                data = self.get_json(f"https://www.reddit.com/r/{subreddit}/hot.json", limit=8)
+                children = data.get("data", {}).get("children", [])  # type: ignore[union-attr]
+                records.extend(parse_reddit_children(list(children)))
+            except Exception:
+                continue
+        return records or sample_signals("social")
+
+
+def verify_reddit_oauth(
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    http_post: HttpPost = requests.post,
+    timeout: float = 8.0,
+) -> dict[str, object]:
+    resolved_client_id = client_id if client_id is not None else os.getenv("REDDIT_CLIENT_ID", "")
+    resolved_client_secret = client_secret if client_secret is not None else os.getenv("REDDIT_CLIENT_SECRET", "")
+    if not resolved_client_id or not resolved_client_secret:
+        return {
+            "configured": False,
+            "valid": False,
+            "detail": "missing REDDIT_CLIENT_ID or REDDIT_CLIENT_SECRET",
+            "token_type": "",
+        }
+    try:
+        response = http_post(
+            "https://www.reddit.com/api/v1/access_token",
+            data={"grant_type": "client_credentials"},
+            auth=(resolved_client_id, resolved_client_secret),
+            headers={"User-Agent": "internet-radar-v2/0.1 by local-user"},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        token = str(payload.get("access_token", ""))
+        token_type = str(payload.get("token_type", ""))
+        if token:
+            return {
+                "configured": True,
+                "valid": True,
+                "detail": "token acquired",
+                "token_type": token_type,
+            }
+        return {
+            "configured": True,
+            "valid": False,
+            "detail": "token response did not include access_token",
+            "token_type": token_type,
+        }
+    except Exception as exc:
+        return {
+            "configured": True,
+            "valid": False,
+            "detail": f"token request failed: {exc.__class__.__name__}",
+            "token_type": "",
+        }
 
 
 class RedditAPICollector(HTTPCollector):
@@ -2912,6 +2969,7 @@ def default_collectors(use_live_network: bool = True) -> list[object]:
         RubyGemsCollector(),
         GreenhouseJobsCollector(),
         LeverJobsCollector(),
+        FocusedWebCrawlerCollector(),
         *_keyed_collectors_from_env(),
         SpecialIntelligenceCollector(),
     ]
@@ -2999,6 +3057,11 @@ def _keyed_collectors_from_env() -> list[object]:
     if os.getenv("TAVILY_API_KEY"):
         collectors.append(TavilyCollector())
     return collectors
+
+
+def _reddit_subreddits_from_env() -> list[str]:
+    configured = os.getenv("INTERNET_RADAR_REDDIT_SUBREDDITS", "")
+    return [item.strip() for item in configured.split(",") if item.strip()]
 
 
 def sample_signals(category: str) -> list[SignalRecord]:

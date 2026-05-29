@@ -45,7 +45,6 @@ def _brief_signal(signal: SignalRecord) -> dict[str, Any]:
         "title": signal.title,
         "source": signal.source,
         "category": signal.category,
-        "score": signal.score,
         "velocity": signal.velocity,
         "url": signal.url,
         "summary": signal.summary,
@@ -59,7 +58,7 @@ def _narrative(top_signal: SignalRecord | None, signals: list[SignalRecord], act
     categories = sorted({signal.category for signal in signals})
     category_text = ", ".join(categories) if categories else "no categories"
     return (
-        f"{top_signal.topic.capitalize()} is the top signal at score {top_signal.score}. "
+        f"{top_signal.topic.capitalize()} is the top signal. "
         f"{len(signals)} signals across {active_sources} active sources cover {category_text}. "
         "Use the Act Now list first, then check job and research momentum for timing."
     )
