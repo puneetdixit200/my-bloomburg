@@ -350,7 +350,7 @@ def test_dashboard_signal_preview_frame_is_static_and_limited():
     assert empty.empty
 
 
-def test_dashboard_signal_preview_balances_sources_and_embeds_links_in_topic():
+def test_dashboard_signal_preview_balances_sources_and_embeds_links_in_title():
     from dashboard.app import _prepare_visible_frame, _signal_table_column_config, _signal_preview_frame
     from internet_radar.storage.models import SignalRecord
 
@@ -385,7 +385,8 @@ def test_dashboard_signal_preview_balances_sources_and_embeds_links_in_topic():
     assert has_links is True
     assert "url" not in visible.columns
     assert "score" not in visible.columns
-    assert visible.iloc[0]["topic"].startswith('<a href="https://crates.io/crates/crate-0"')
+    assert visible.iloc[0]["title"].startswith('<a href="https://crates.io/crates/crate-0"')
+    assert not str(visible.iloc[0]["topic"]).startswith("<a ")
 
 
 def test_dashboard_public_payload_helpers_strip_scores_and_link_columns():
@@ -414,7 +415,7 @@ def test_dashboard_public_payload_helpers_strip_scores_and_link_columns():
 
     assert has_links is True
     assert list(frame.columns) == ["topic", "title", "source", "category", "summary"]
-    assert '<a href="https://github.com/example/browser-agent"' in frame.iloc[0]["topic"]
+    assert '<a href="https://github.com/example/browser-agent"' in frame.iloc[0]["title"]
     assert "url" not in exported.columns
     assert not any("score" in str(column).lower() for column in exported.columns)
 
@@ -425,6 +426,31 @@ def test_dashboard_public_payload_helpers_strip_scores_and_link_columns():
     assert _public_json({"score": 94, "nested": {"domain_score": 10, "note": "scored 94/100 today"}}) == {
         "nested": {"note": "today"}
     }
+
+
+def test_dashboard_table_links_prefer_title_before_other_label_columns():
+    import pandas as pd
+
+    from dashboard.app import _prepare_visible_frame
+
+    frame, has_links = _prepare_visible_frame(
+        pd.DataFrame(
+            [
+                {
+                    "topic": "browser agents",
+                    "title": "Browser agent repo",
+                    "name": "fallback name",
+                    "url": "https://github.com/example/browser-agent",
+                }
+            ]
+        )
+    )
+
+    assert has_links is True
+    assert "url" not in frame.columns
+    assert frame.iloc[0]["title"].startswith('<a href="https://github.com/example/browser-agent"')
+    assert frame.iloc[0]["topic"] == "browser agents"
+    assert frame.iloc[0]["name"] == "fallback name"
 
 
 def test_radar_search_analysis_helpers_render_readable_tables():

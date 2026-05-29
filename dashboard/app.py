@@ -265,7 +265,7 @@ def _link_columns(frame: pd.DataFrame) -> list[str]:
 
 
 def _link_label_column(frame: pd.DataFrame) -> str | None:
-    for column in ("topic", "title", "project", "skill", "problem", "name", "signal_id"):
+    for column in ("title", "name", "project", "topic", "skill", "problem", "signal_id"):
         if column in frame.columns:
             return column
     return None
