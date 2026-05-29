@@ -43,6 +43,7 @@ from internet_radar.storage.payload_cache import load_briefing_payload, payload_
 
 
 CATEGORIES = ["code", "social", "news", "jobs", "hackathons", "research", "finance", "search", "app_stores"]
+MAX_SIGNALS_PER_SOURCE = 3
 _BACKGROUND_REFRESH_RUNNING = False
 _APP_FILE = Path(__file__).resolve()
 _PAGES_DIR = _APP_FILE.parent / "pages"
@@ -196,14 +197,14 @@ def _status_mode(status: str) -> str:
 
 def _signal_preview_frame(signals: list[SignalRecord], limit: int = 10) -> pd.DataFrame:
     columns = ["topic", "title", "source", "category", "summary", "url"]
-    frame = _signals_to_frame(_balanced_signals(signals, limit=limit, max_per_source=2))
+    frame = _signals_to_frame(_balanced_signals(signals, limit=limit, max_per_source=MAX_SIGNALS_PER_SOURCE))
     if frame.empty:
         return pd.DataFrame(columns=columns)
     return frame[columns]
 
 
 def _signal_display_frame(signals: list[SignalRecord]) -> pd.DataFrame:
-    return _signals_to_frame(_balanced_signals(signals))
+    return _signals_to_frame(_balanced_signals(signals, max_per_source=MAX_SIGNALS_PER_SOURCE))
 
 
 def _balanced_signals(
@@ -222,7 +223,6 @@ def _balanced_signals(
 
     balanced: list[SignalRecord] = []
     source_counts: dict[str, int] = {source: 0 for source in source_order}
-    cap_released = False
     while any(buckets.values()):
         added_this_round = False
         for source in source_order:
@@ -236,10 +236,6 @@ def _balanced_signals(
             source_counts[source] += 1
             added_this_round = True
         if not added_this_round:
-            if max_per_source is not None and not cap_released:
-                max_per_source = None
-                cap_released = True
-                continue
             break
     return balanced
 
@@ -375,7 +371,7 @@ def _signal_action(signal: SignalRecord) -> str:
 
 
 def _render_signal_cards(signals: list[SignalRecord], limit: int = 4) -> None:
-    for signal in signals[:limit]:
+    for signal in _balanced_signals(signals, limit=limit, max_per_source=MAX_SIGNALS_PER_SOURCE):
         st.markdown(
             signal_card_html(
                 signal.title,
@@ -783,7 +779,7 @@ def _render_signal_explorer(
     key_prefix: str = "signals",
     page_payload: dict[str, object] | None = None,
 ) -> None:
-    filtered = _apply_filters(signals, filters)
+    filtered = _balanced_signals(_apply_filters(signals, filters), max_per_source=MAX_SIGNALS_PER_SOURCE)
     cols = st.columns(4)
     with cols[0]:
         render_glow_metric(st, "Signals in View", len(filtered), "teal")

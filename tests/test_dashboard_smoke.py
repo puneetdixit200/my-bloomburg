@@ -297,6 +297,70 @@ def test_dashboard_page_metric_values_summarize_page_signals():
     }
 
 
+def test_dashboard_payload_never_exposes_more_than_three_signals_per_source():
+    from collections import Counter
+
+    from internet_radar.dashboard_data import build_dashboard_payload
+    from internet_radar.storage.models import SignalRecord, UserProfile
+
+    signals = [
+        *[
+            SignalRecord(
+                id=f"github-{index}",
+                topic="browser agents",
+                title=f"GitHub signal {index}",
+                source="GitHub Search",
+                category="code",
+                score=100 - index,
+            )
+            for index in range(6)
+        ],
+        *[
+            SignalRecord(
+                id=f"reddit-{index}",
+                topic="browser agents",
+                title=f"Reddit signal {index}",
+                source="Reddit JSON",
+                category="social",
+                score=95 - index,
+            )
+            for index in range(5)
+        ],
+        *[
+            SignalRecord(
+                id=f"remoteok-{index}",
+                topic="browser agents",
+                title=f"RemoteOK signal {index}",
+                source="RemoteOK",
+                category="jobs",
+                score=90 - index,
+            )
+            for index in range(5)
+        ],
+        SignalRecord(id="pypi", topic="browser agents", title="PyPI signal", source="PyPI", category="code", score=80),
+    ]
+    payload = build_dashboard_payload(
+        signals,
+        profile=UserProfile(interests=["browser agents"], alert_threshold=0),
+    )
+
+    for page_payload in payload.values():
+        counts = Counter(signal.source for signal in page_payload["signals"])
+        assert all(count <= 3 for count in counts.values())
+
+    personalized_counts = Counter(signal.source for signal in payload["profile"]["personalized_signals"])
+    assert all(count <= 3 for count in personalized_counts.values())
+
+    by_id = {str(signal.id): signal for signal in signals}
+    alert_counts = Counter(by_id[alert.signal_id].source for alert in payload["briefing"]["alerts"])
+    assert all(count <= 3 for count in alert_counts.values())
+    assert [signal.id for signal in payload["github_radar"]["signals"] if signal.source == "GitHub Search"] == [
+        "github-0",
+        "github-1",
+        "github-2",
+    ]
+
+
 def test_dashboard_extracts_project_signals_for_github_radar():
     from dashboard.app import _project_signals, _projects_to_frame
     from internet_radar.storage.models import SignalRecord
@@ -345,9 +409,30 @@ def test_dashboard_signal_preview_frame_is_static_and_limited():
     empty = _signal_preview_frame([])
 
     assert list(frame.columns) == ["topic", "title", "source", "category", "summary", "url"]
-    assert len(frame) == 5
+    assert len(frame) == 3
     assert list(empty.columns) == ["topic", "title", "source", "category", "summary", "url"]
     assert empty.empty
+
+
+def test_dashboard_signal_display_frame_limits_sources_to_three():
+    from collections import Counter
+
+    from dashboard.app import _signal_display_frame
+    from internet_radar.storage.models import SignalRecord
+
+    signals = [
+        SignalRecord(id=f"gh-{index}", topic="mcp", title=f"GitHub {index}", source="GitHub Search", category="code", score=100 - index)
+        for index in range(6)
+    ]
+    signals.extend(
+        SignalRecord(id=f"pypi-{index}", topic="mcp", title=f"PyPI {index}", source="PyPI", category="code", score=90 - index)
+        for index in range(2)
+    )
+
+    frame = _signal_display_frame(signals)
+
+    assert Counter(frame["source"])["GitHub Search"] == 3
+    assert Counter(frame["source"])["PyPI"] == 2
 
 
 def test_dashboard_signal_preview_balances_sources_and_embeds_links_in_title():
@@ -377,7 +462,7 @@ def test_dashboard_signal_preview_balances_sources_and_embeds_links_in_title():
     column_config = _signal_table_column_config()
 
     assert len(frame) == 6
-    assert list(frame["source"]).count("crates.io") <= 2
+    assert list(frame["source"]).count("crates.io") <= 3
     assert {"GitHub Search", "PyPI", "Dev.to"} <= set(frame["source"])
     assert column_config == {}
 

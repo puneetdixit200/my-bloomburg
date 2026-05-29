@@ -32,6 +32,8 @@ from internet_radar.storage.models import HistoricalTrend, PageDefinition, Signa
 from internet_radar.storage.vector_store import build_semantic_clusters
 
 
+MAX_SIGNALS_PER_SOURCE = 3
+
 PAGE_DEFINITIONS = [
     PageDefinition(key="briefing", title="Morning Intelligence Briefing", category="all", description="Daily ranked signal summary."),
     PageDefinition(key="github_radar", title="GitHub Radar", category="code", description="Repository and package velocity."),
@@ -73,38 +75,39 @@ def build_dashboard_payload(
 
     all_signals = sorted(signals, key=lambda item: item.score, reverse=True)
     router = LLMRouter()
-    personalized_signals = rank_for_profile(all_signals, profile, limit=10)
-    alerts = build_alerts(all_signals, profile)
-    suggested_queries = profile.interests[:5] or [signal.topic for signal in all_signals[:5]]
+    display_signals = limit_signals_per_source(all_signals)
+    personalized_signals = limit_signals_per_source(rank_for_profile(all_signals, profile, limit=10))
+    alerts = build_alerts(display_signals, profile)
+    suggested_queries = profile.interests[:5] or [signal.topic for signal in display_signals[:5]]
     query_analysis = {
-        query: analyze_query(all_signals, query, profile=profile, include_deep_dive=True, include_semantic=True)
+        query: analyze_query(display_signals, query, profile=profile, include_deep_dive=True, include_semantic=True)
         for query in suggested_queries
     }
-    gap_clusters = find_startup_gaps(all_signals)
-    semantic_clusters = build_semantic_clusters(all_signals)
-    source_agreements = build_source_agreements(all_signals)
-    trend_correlations = correlate_trends(all_signals)
-    academic_signals = build_academic_signals(all_signals)
-    funding_signals = build_funding_signals(all_signals)
+    gap_clusters = find_startup_gaps(display_signals)
+    semantic_clusters = build_semantic_clusters(display_signals)
+    source_agreements = build_source_agreements(display_signals)
+    trend_correlations = correlate_trends(display_signals)
+    academic_signals = build_academic_signals(display_signals)
+    funding_signals = build_funding_signals(display_signals)
     crowd_predictions = [
         prediction
-        for signal in all_signals
+        for signal in display_signals
         if signal.category == "hackathons"
         for prediction in [_crowd_prediction_for_signal(signal)]
         if prediction is not None and prediction.recommendation != "EXPIRED"
     ]
-    signal_summary = summarize_signals(all_signals, router=router)
-    classifications = classify_signals(all_signals, router=router, allow_network=False)
-    gap_analyses = analyze_gaps(all_signals, router=router)
-    trend_predictions = predict_trends(all_signals, router=router)
+    signal_summary = summarize_signals(display_signals, router=router)
+    classifications = classify_signals(display_signals, router=router, allow_network=False)
+    gap_analyses = analyze_gaps(display_signals, router=router)
+    trend_predictions = predict_trends(display_signals, router=router)
     idea_validations = validate_ideas(
         [analysis.startup_ideas[0].idea for analysis in gap_analyses if analysis.startup_ideas],
-        all_signals,
+        display_signals,
         profile=profile,
         router=router,
     )
-    daily_briefing = write_daily_briefing(all_signals, active_sources=active_sources, llm_status=llm_status)
-    skill_recommendations = recommend_skills(all_signals, profile=profile)
+    daily_briefing = write_daily_briefing(display_signals, active_sources=active_sources, llm_status=llm_status)
+    skill_recommendations = recommend_skills(display_signals, profile=profile)
     historical_trends = historical_trends or []
     analysis_artifacts = analysis_artifacts or {}
     signal_summary = _artifact_value(analysis_artifacts, "signal_summary", signal_summary)
@@ -123,15 +126,19 @@ def build_dashboard_payload(
     payload: dict[str, dict[str, Any]] = {}
     for page in PAGE_DEFINITIONS:
         if page.category == "all":
-            page_signals = all_signals
+            page_signals = display_signals
         elif page.key == "startup_gaps":
-            page_signals = [signal for signal in all_signals if signal.category in {"social", "news", "app_stores"}]
+            page_signals = limit_signals_per_source(
+                [signal for signal in all_signals if signal.category in {"social", "news", "app_stores"}]
+            )
         elif page.key == "skill_radar":
-            page_signals = [signal for signal in all_signals if signal.category in {"jobs", "code", "research"}]
+            page_signals = limit_signals_per_source(
+                [signal for signal in all_signals if signal.category in {"jobs", "code", "research"}]
+            )
         elif page.category == "profile":
             page_signals = []
         else:
-            page_signals = by_category[str(page.category)]
+            page_signals = limit_signals_per_source(by_category[str(page.category)])
 
         payload[page.key] = {
             "title": page.title,
@@ -170,6 +177,23 @@ def build_dashboard_payload(
             "query_analysis": query_analysis,
         }
     return payload
+
+
+def limit_signals_per_source(
+    signals: list[SignalRecord],
+    *,
+    max_per_source: int = MAX_SIGNALS_PER_SOURCE,
+) -> list[SignalRecord]:
+    if max_per_source <= 0:
+        return []
+    source_counts: dict[str, int] = defaultdict(int)
+    limited: list[SignalRecord] = []
+    for signal in signals:
+        if source_counts[signal.source] >= max_per_source:
+            continue
+        source_counts[signal.source] += 1
+        limited.append(signal)
+    return limited
 
 
 def _artifact_value(analysis_artifacts: dict[str, Any], key: str, fallback: Any) -> Any:
