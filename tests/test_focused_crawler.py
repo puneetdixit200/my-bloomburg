@@ -124,3 +124,44 @@ def test_focused_crawler_is_part_of_free_live_collectors(monkeypatch):
     assert any(isinstance(collector, FocusedWebCrawlerCollector) for collector in collectors)
     assert "Focused Web Crawler" in {source.name for source in enabled_sources()}
     assert DEFAULT_SOURCE_INTERVALS["focused web crawler"] == 5.0
+
+
+def test_focused_crawler_defaults_are_useful_for_live_collection(monkeypatch):
+    from internet_radar.collectors.focused_crawler import FocusedWebCrawlerCollector
+
+    monkeypatch.delenv("INTERNET_RADAR_CRAWLER_MAX_TOTAL_PAGES", raising=False)
+    monkeypatch.delenv("INTERNET_RADAR_CRAWLER_MAX_PAGES_PER_SEED", raising=False)
+    monkeypatch.delenv("INTERNET_RADAR_CRAWLER_TIMEOUT_SECONDS", raising=False)
+
+    collector = FocusedWebCrawlerCollector(seeds=[])
+
+    assert collector.max_total_pages == 200
+    assert collector.max_pages_per_seed == 20
+    assert collector.timeout == 20.0
+
+
+def test_bundled_crawl_seeds_target_high_value_radar_pages():
+    from internet_radar.collectors.focused_crawler import load_crawl_seeds
+
+    seeds = load_crawl_seeds("config/crawl_seeds.yaml")
+    names = {seed.name for seed in seeds}
+
+    assert {
+        "Devpost Hackathons",
+        "Unstop Hackathons",
+        "Dare2Compete Hackathons",
+        "HackerEarth Hackathons",
+        "Hackaday Blog",
+        "Make Magazine",
+        "IEEE Spectrum Robotics",
+        "HN New Posts",
+        "Indie Hackers Posts",
+        "TechCrunch Startups",
+        "Papers With Code Latest",
+        "HuggingFace Blog",
+        "RemoteOK Jobs",
+        "Wellfound Jobs",
+    }.issubset(names)
+    assert {seed.category for seed in seeds} >= {"hackathons", "code", "social", "news", "research", "jobs"}
+    assert all(seed.max_pages >= 20 for seed in seeds)
+    assert any(seed.follow_links for seed in seeds)

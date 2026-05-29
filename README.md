@@ -25,7 +25,7 @@ Local-first signal intelligence dashboard based on `INTERNET_RADAR_V2_ARCHITECTU
 - Scheduler priority queue so immediate alerts, deep analysis, and crowd warnings run before routine cadence jobs.
 - Special intelligence modules for abandoned-tool opportunities, conference topic radar, salary velocity, and early wave prediction.
 - Ollama integration with installed local models such as `qwen2.5:0.5b`; rule fallback when Ollama is unavailable.
-- Streamlit dashboard with all 13 architecture pages, interactive filters, charts, CSV export, and signal drilldowns.
+- Streamlit dashboard with all 12 active architecture pages, interactive filters, charts, CSV export, and signal drilldowns.
 - Dashboard reliability layer with source health, visible data previews, latest-payload cache, manual refresh, free-only mode, and Markdown daily report export.
 - Pytest coverage for pipeline, storage, scoring, collectors, LLM routing, dashboard smoke paths, and Streamlit rendering.
 
@@ -52,9 +52,10 @@ export INTERNET_RADAR_FREE_ONLY=1
 ```bash
 export INTERNET_RADAR_ENABLE_CRAWLER=1
 export INTERNET_RADAR_CRAWL_SEEDS=config/crawl_seeds.yaml
-export INTERNET_RADAR_CRAWLER_MAX_TOTAL_PAGES=8
-export INTERNET_RADAR_CRAWLER_MAX_PAGES_PER_SEED=2
+export INTERNET_RADAR_CRAWLER_MAX_TOTAL_PAGES=200
+export INTERNET_RADAR_CRAWLER_MAX_PAGES_PER_SEED=20
 export INTERNET_RADAR_CRAWLER_RESPECT_ROBOTS=1
+export INTERNET_RADAR_CRAWLER_TIMEOUT_SECONDS=20
 ```
 
 No-key Reddit JSON scanning runs even without OAuth credentials. Tune it with:

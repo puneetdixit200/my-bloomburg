@@ -67,6 +67,26 @@ def test_make_real_readiness_separates_ready_capabilities_from_external_blockers
     assert set(report.blockers) == {"reddit_oauth", "telegram"}
 
 
+def test_make_real_readiness_accepts_database_reddit_json_evidence(tmp_path, monkeypatch):
+    from internet_radar.operations.readiness import build_make_real_readiness
+
+    payload = BriefingPayload(
+        active_sources=67,
+        signals_24h=500,
+        top_signals=[],
+        source_health={"Reddit JSON": "database (36)"},
+        collection_mode="live",
+    )
+    monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
+    monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
+
+    report = build_make_real_readiness(db_path=tmp_path / "radar.sqlite", payload=payload)
+    by_key = {check.key: check for check in report.checks}
+
+    assert by_key["reddit_json"].status == "ready"
+    assert by_key["reddit_oauth"].status == "blocked"
+
+
 def test_make_real_readiness_frame_is_dashboard_friendly(tmp_path):
     from internet_radar.operations.readiness import build_make_real_readiness, readiness_frame
 

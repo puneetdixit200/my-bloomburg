@@ -126,7 +126,7 @@ def _live_collection_check(payload: BriefingPayload | None) -> ReadinessCheck:
 
 def _reddit_json_check(payload: BriefingPayload | None) -> ReadinessCheck:
     health = (payload.source_health or {}).get("Reddit JSON", "") if payload else ""
-    if health.startswith("live"):
+    if health.startswith(("live", "database")):
         return _ready("reddit_json", "Reddit no-key scan", health)
     return _blocked("reddit_json", "Reddit no-key scan", health or "No Reddit JSON health in latest payload.", "Run live collection or check public Reddit JSON access.")
 

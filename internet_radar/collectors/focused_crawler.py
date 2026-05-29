@@ -63,11 +63,11 @@ class FocusedWebCrawlerCollector(HTTPCollector):
         max_pages_per_seed: int | None = None,
         respect_robots: bool | None = None,
     ) -> None:
-        timeout = float(os.getenv("INTERNET_RADAR_CRAWLER_TIMEOUT_SECONDS", "8"))
+        timeout = float(os.getenv("INTERNET_RADAR_CRAWLER_TIMEOUT_SECONDS", "20"))
         super().__init__(name="Focused Web Crawler", category="search", timeout=timeout, cache_ttl_seconds=900)
         self.seeds = seeds if seeds is not None else load_crawl_seeds(seed_path)
-        self.max_total_pages = max_total_pages if max_total_pages is not None else _env_int("INTERNET_RADAR_CRAWLER_MAX_TOTAL_PAGES", 8)
-        self.max_pages_per_seed = max_pages_per_seed if max_pages_per_seed is not None else _env_int("INTERNET_RADAR_CRAWLER_MAX_PAGES_PER_SEED", 2)
+        self.max_total_pages = max_total_pages if max_total_pages is not None else _env_int("INTERNET_RADAR_CRAWLER_MAX_TOTAL_PAGES", 200)
+        self.max_pages_per_seed = max_pages_per_seed if max_pages_per_seed is not None else _env_int("INTERNET_RADAR_CRAWLER_MAX_PAGES_PER_SEED", 20)
         self.respect_robots = respect_robots if respect_robots is not None else _env_bool("INTERNET_RADAR_CRAWLER_RESPECT_ROBOTS", True)
         self._robots_cache: dict[str, RobotFileParser | None] = {}
 

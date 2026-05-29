@@ -9,6 +9,43 @@ from datetime import UTC, datetime
 from internet_radar.storage.models import BriefingPayload, SignalRecord
 
 
+def test_cli_live_run_saves_dashboard_payload_cache(tmp_path, monkeypatch, capsys):
+    from internet_radar.cli import main
+    from internet_radar.storage.payload_cache import load_briefing_payload
+
+    cache_path = tmp_path / "latest_payload.json"
+    signal = SignalRecord(
+        id="crawler:demo",
+        topic="hackathon opportunities",
+        title="Useful hackathon signal",
+        source="Focused Web Crawler",
+        category="hackathons",
+        score=74,
+    )
+    payload = BriefingPayload(
+        active_sources=1,
+        signals_24h=1,
+        top_signals=[signal],
+        source_health={"Focused Web Crawler": "live (1)"},
+        source_counts={"Focused Web Crawler": 1},
+        collection_mode="live",
+    )
+
+    monkeypatch.setenv("INTERNET_RADAR_PAYLOAD_CACHE", str(cache_path))
+    monkeypatch.setenv("INTERNET_RADAR_DISABLE_DOTENV", "1")
+    monkeypatch.setattr("internet_radar.cli.run_radar_once", lambda db_path, use_live_network: payload)
+
+    main(["--live", "--db", str(tmp_path / "radar.sqlite")])
+
+    output = json.loads(capsys.readouterr().out)
+    cached = load_briefing_payload(cache_path)
+
+    assert output["collection_mode"] == "live"
+    assert cached is not None
+    assert cached.collection_mode == "live"
+    assert cached.source_counts["Focused Web Crawler"] == 1
+
+
 def test_cli_readiness_uses_cached_payload_and_reports_external_blockers(tmp_path, monkeypatch, capsys):
     from internet_radar.cli import main
     from internet_radar.scheduler.heartbeat import record_scheduler_heartbeat

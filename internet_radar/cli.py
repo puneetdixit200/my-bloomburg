@@ -17,7 +17,7 @@ from internet_radar.config.settings import load_local_env, restore_env
 from internet_radar.operations.credentials import build_credential_setup_report
 from internet_radar.operations.readiness import build_make_real_readiness
 from internet_radar.pipeline import run_radar_once
-from internet_radar.storage.payload_cache import load_briefing_payload
+from internet_radar.storage.payload_cache import load_briefing_payload, save_briefing_payload
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -218,6 +218,8 @@ def main(argv: list[str] | None = None) -> None:
             return
 
         briefing = run_radar_once(db_path=args.db, use_live_network=args.live)
+        if args.live:
+            save_briefing_payload(briefing)
         print(json.dumps(briefing.model_dump(mode="json"), indent=2))
     finally:
         restore_env(previous_env)

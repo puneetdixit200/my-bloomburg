@@ -1,60 +1,217 @@
 seeds:
+  # Hackathons and competitions
   - name: Devpost Hackathons
     url: https://devpost.com/hackathons
     category: hackathons
     topic: hackathon opportunities
-    score: 62
-    max_pages: 1
-    follow_links: false
+    score: 72
+    max_pages: 20
+    follow_links: true
     include_patterns:
       - /hackathons
+      - /software/
+      - /challenge/
+    exclude_patterns:
+      - /users/
+      - /portfolio
+      - /login
+      - /auth
 
-  - name: MLH Events
-    url: https://mlh.io/seasons/2026/events
+  - name: Unstop Hackathons
+    url: https://unstop.com/hackathons
     category: hackathons
-    topic: student hackathons
-    score: 60
-    max_pages: 1
-    follow_links: false
+    topic: student hackathons and competitions
+    score: 70
+    max_pages: 20
+    follow_links: true
     include_patterns:
-      - /events
+      - /hackathons
+      - /competitions
+    exclude_patterns:
+      - /login
+      - /auth
+      - /u/
 
-  - name: YC Startup Jobs
-    url: https://www.ycombinator.com/jobs
+  - name: Dare2Compete Hackathons
+    url: https://dare2compete.com/hackathons
+    category: hackathons
+    topic: india hackathons and competitions
+    score: 68
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - /hackathons
+      - /competitions
+    exclude_patterns:
+      - /login
+      - /auth
+      - /u/
+
+  - name: HackerEarth Hackathons
+    url: https://www.hackerearth.com/challenges/hackathon/
+    category: hackathons
+    topic: coding hackathons and challenges
+    score: 70
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - /challenges/hackathon
+      - /challenge/
+    exclude_patterns:
+      - /login
+      - /users/
+      - /practice/
+
+  # Robotics, embedded, and maker signals
+  - name: Hackaday Blog
+    url: https://hackaday.com/blog/
+    category: code
+    topic: robotics embedded maker projects
+    score: 66
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - /20[0-9][0-9]/
+      - /blog/
+    exclude_patterns:
+      - /author/
+      - /tag/
+      - /category/
+
+  - name: Make Magazine
+    url: https://makezine.com/category/technology/
+    category: code
+    topic: maker robotics embedded projects
+    score: 64
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - /category/technology
+      - /projects/
+      - /article/
+    exclude_patterns:
+      - /author/
+      - /tag/
+      - /search
+
+  - name: IEEE Spectrum Robotics
+    url: https://spectrum.ieee.org/robotics
+    category: research
+    topic: robotics engineering research
+    score: 68
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - /robotics
+      - /automaton
+    exclude_patterns:
+      - /video/
+      - /podcast/
+      - /newsletter
+
+  # Startup and product pain signals
+  - name: HN New Posts
+    url: https://news.ycombinator.com/newest
+    category: social
+    topic: startup developer pain signals
+    score: 66
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - item\?id=
+      - newest
+    exclude_patterns:
+      - /login
+      - /submit
+      - /user\?id=
+
+  - name: Indie Hackers Posts
+    url: https://www.indiehackers.com/posts
+    category: social
+    topic: indie hacker product pain signals
+    score: 64
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - /post
+      - /posts
+    exclude_patterns:
+      - /sign-in
+      - /start
+      - /products
+
+  - name: TechCrunch Startups
+    url: https://techcrunch.com/category/startups/
+    category: news
+    topic: startup launches and funding
+    score: 66
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - /category/startups
+      - /20[0-9][0-9]/
+    exclude_patterns:
+      - /author/
+      - /tag/
+      - /events/
+
+  # Research and AI momentum
+  - name: Papers With Code Latest
+    url: https://paperswithcode.com/latest
+    category: research
+    topic: machine learning papers with code
+    score: 68
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - /paper/
+      - /latest
+    exclude_patterns:
+      - /method/
+      - /dataset/
+      - /task/
+
+  - name: HuggingFace Blog
+    url: https://huggingface.co/blog
+    category: research
+    topic: ai model and tooling releases
+    score: 68
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - /blog
+    exclude_patterns:
+      - /spaces/
+      - /models/
+      - /datasets/
+
+  # Jobs and skill demand
+  - name: RemoteOK Jobs
+    url: https://remoteok.com/remote-jobs
     category: jobs
-    topic: startup internships and jobs
-    score: 61
-    max_pages: 1
-    follow_links: false
+    topic: remote developer jobs and skills
+    score: 62
+    max_pages: 20
+    follow_links: true
+    include_patterns:
+      - /remote-
+      - /remote-jobs
+    exclude_patterns:
+      - /hire-
+      - /remote-companies
+      - /login
+
+  - name: Wellfound Jobs
+    url: https://wellfound.com/jobs
+    category: jobs
+    topic: startup jobs and skills
+    score: 62
+    max_pages: 20
+    follow_links: true
     include_patterns:
       - /jobs
-
-  - name: Model Context Protocol Servers
-    url: https://github.com/modelcontextprotocol/servers
-    category: code
-    topic: mcp server projects
-    score: 64
-    max_pages: 1
-    follow_links: false
-    include_patterns:
-      - modelcontextprotocol
-
-  - name: Hugging Face Papers
-    url: https://huggingface.co/papers
-    category: research
-    topic: ai research momentum
-    score: 63
-    max_pages: 1
-    follow_links: false
-    include_patterns:
-      - /papers
-
-  - name: Product Hunt Topics
-    url: https://www.producthunt.com/topics/artificial-intelligence
-    category: news
-    topic: ai product launches
-    score: 59
-    max_pages: 1
-    follow_links: false
-    include_patterns:
-      - /topics
+      - /company/
+    exclude_patterns:
+      - /login
+      - /recruit
+      - /candidate
