@@ -168,6 +168,7 @@ def test_dashboard_app_wires_premium_css_metrics_and_plotly_charts():
     assert "st.plotly_chart" in source
     assert "radar_bar_chart(" in source
     assert "render_idea_card(" in source
+    assert "Free-only Guardrails" not in source
 
 
 def test_dashboard_signal_filters_are_shared_across_pages():

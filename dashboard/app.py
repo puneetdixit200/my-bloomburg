@@ -1020,9 +1020,6 @@ def render_dashboard(payload: dict[str, dict[str, object]], filters: dict[str, A
         render_glow_metric(st, "Collection Sec", f"{float(collection.get('duration_seconds') or 0):.1f}", "orange")
     with freshness_cols[3]:
         render_glow_metric(st, "Generated", _format_generated_at(collection.get("generated_at")), "teal")
-    free_only = os.getenv("INTERNET_RADAR_FREE_ONLY", "0") == "1"
-    with st.expander("Free-only Guardrails", expanded=free_only):
-        _render_table(_free_only_guardrails_frame(free_only))
     readiness = _make_real_readiness_frame(top)
     with st.expander("Make It Real Readiness", expanded=bool((readiness["status"] == "blocked").any())):
         _render_table(readiness)
