@@ -65,12 +65,18 @@ class RadarStore:
                 rows,
             )
 
-    def list_signals(self, category: str | None = None, limit: int = 100) -> list[SignalRecord]:
+    def list_signals(self, category: str | None = None, limit: int = 100, since: datetime | None = None) -> list[SignalRecord]:
         sql = "SELECT * FROM signals"
         params: list[object] = []
+        clauses: list[str] = []
         if category:
-            sql += " WHERE category = ?"
+            clauses.append("category = ?")
             params.append(category)
+        if since:
+            clauses.append("observed_at >= ?")
+            params.append(since.isoformat())
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY score DESC, observed_at DESC LIMIT ?"
         params.append(limit)
 

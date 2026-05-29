@@ -200,6 +200,53 @@ def test_pipeline_runs_with_fake_collectors_and_persists(tmp_path):
     assert RadarStore(db_path).list_signals()[0].source == "Fake Collector"
 
 
+def test_pipeline_excludes_stale_database_signals_from_dashboard_and_llm(tmp_path, monkeypatch):
+    from internet_radar.pipeline import run_radar_once
+    from internet_radar.storage.db import RadarStore
+    from internet_radar.storage.models import SignalRecord
+
+    now = datetime(2026, 5, 29, tzinfo=UTC)
+    stale = SignalRecord(
+        id="old:1",
+        topic="old ai trend",
+        title="Old high score should not appear",
+        source="Old Source",
+        category="news",
+        score=100,
+        observed_at=now - timedelta(days=40),
+    )
+    fresh = SignalRecord(
+        id="fresh:1",
+        topic="fresh ai trend",
+        title="Fresh lower score should appear",
+        source="Fresh Source",
+        category="news",
+        score=50,
+        observed_at=now,
+    )
+    db_path = tmp_path / "radar.sqlite"
+    RadarStore(db_path).upsert_signals([stale])
+    captured: dict[str, object] = {}
+
+    def fake_artifacts(signals, **kwargs):
+        captured["titles"] = [signal.title for signal in signals]
+        return {}
+
+    monkeypatch.setattr("internet_radar.pipeline.build_analysis_artifacts", fake_artifacts)
+
+    class FakeCollector:
+        name = "Fresh Source"
+        category = "news"
+
+        def collect(self):
+            return [fresh]
+
+    result = run_radar_once(collectors=[FakeCollector()], db_path=db_path, use_live_network=False, now=now)
+
+    assert [signal.title for signal in result.top_signals] == ["Fresh lower score should appear"]
+    assert captured["titles"] == ["Fresh lower score should appear"]
+
+
 def test_pipeline_keeps_running_when_one_collector_fails(tmp_path):
     from internet_radar.pipeline import run_radar_once
     from internet_radar.storage.models import SignalRecord

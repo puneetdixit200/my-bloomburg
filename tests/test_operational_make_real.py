@@ -189,6 +189,57 @@ def test_pipeline_analysis_can_generate_bounded_llm_insight(monkeypatch):
     assert insight["confidence"] == 86
 
 
+def test_pipeline_analysis_only_sends_recent_signals_to_llm(monkeypatch):
+    from internet_radar.brain.llm_router import LLMChoice
+    from internet_radar.brain.pipeline_analysis import build_analysis_artifacts
+
+    monkeypatch.setenv("INTERNET_RADAR_ENABLE_LLM_ANALYSIS", "1")
+    monkeypatch.setenv("INTERNET_RADAR_SIGNAL_MAX_AGE_DAYS", "14")
+    now = datetime.now(UTC)
+    calls: list[str] = []
+
+    class FakeRouter:
+        def route(self, task, content_length):
+            return LLMChoice(provider="ollama", model="fake-local", reason=f"test {task}")
+
+        def classify_signal(self, text, allow_network=True):
+            return {"topic": "fresh browser agents", "sentiment": "positive", "confidence": 80}
+
+        def generate_json(self, task, prompt, content_length=None, allow_network=True):
+            calls.append(prompt)
+            return self.route(task, content_length or len(prompt)), {"headline": "Fresh only", "confidence": 81}
+
+    build_analysis_artifacts(
+        [
+            SignalRecord(
+                id="old",
+                topic="old browser agents",
+                title="Old browser-agent story",
+                source="Old Source",
+                category="news",
+                score=100,
+                observed_at=now.replace(year=2024),
+            ),
+            SignalRecord(
+                id="fresh",
+                topic="fresh browser agents",
+                title="Fresh browser-agent story",
+                source="Fresh Source",
+                category="news",
+                score=60,
+                observed_at=now,
+            ),
+        ],
+        active_sources=2,
+        llm_status="ollama:fake-local",
+        router=FakeRouter(),
+    )
+
+    assert calls
+    assert "Fresh browser-agent story" in calls[0]
+    assert "Old browser-agent story" not in calls[0]
+
+
 def test_scheduler_uses_persistent_sqlite_job_store(tmp_path):
     from internet_radar.scheduler.runner import build_scheduler
 

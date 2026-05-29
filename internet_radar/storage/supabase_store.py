@@ -47,7 +47,7 @@ class SupabaseRadarStore:
         )
         response.raise_for_status()
 
-    def list_signals(self, category: str | None = None, limit: int = 100) -> list[SignalRecord]:
+    def list_signals(self, category: str | None = None, limit: int = 100, since: object | None = None) -> list[SignalRecord]:
         params: dict[str, str | int] = {
             "select": "*",
             "order": "score.desc,observed_at.desc",
@@ -55,6 +55,9 @@ class SupabaseRadarStore:
         }
         if category:
             params["category"] = f"eq.{category}"
+        if since is not None:
+            iso_value = since.isoformat() if hasattr(since, "isoformat") else str(since)
+            params["observed_at"] = f"gte.{iso_value}"
         response = self.http_get(
             f"{self.url}/rest/v1/{self.table}",
             params=params,

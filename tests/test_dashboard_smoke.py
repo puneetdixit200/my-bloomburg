@@ -74,6 +74,55 @@ def test_dashboard_database_recheck_payload_reads_sqlite_signals(tmp_path):
     assert payload["briefing"]["source_counts"] == {"Devpost": 1, "GitHub": 1}
 
 
+def test_dashboard_database_recheck_filters_expired_and_stale_signals(tmp_path, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from dashboard.app import _payload_from_database
+    from internet_radar.storage.db import RadarStore
+    from internet_radar.storage.models import SignalRecord
+
+    db_path = tmp_path / "radar.sqlite"
+    now = datetime.now(UTC)
+    store = RadarStore(db_path)
+    store.upsert_signals(
+        [
+            SignalRecord(
+                id="old",
+                topic="old hackathon",
+                title="Old Hackathon",
+                source="Crawler",
+                category="hackathons",
+                score=100,
+                observed_at=now - timedelta(days=45),
+            ),
+            SignalRecord(
+                id="expired",
+                topic="expired hackathon",
+                title="Expired Hackathon",
+                source="Crawler",
+                category="hackathons",
+                score=99,
+                metadata={"deadline": (now - timedelta(days=1)).date().isoformat()},
+            ),
+            SignalRecord(
+                id="fresh",
+                topic="fresh hackathon",
+                title="Fresh Hackathon",
+                source="Crawler",
+                category="hackathons",
+                score=50,
+                observed_at=now,
+                metadata={"deadline": (now + timedelta(days=7)).date().isoformat()},
+            ),
+        ]
+    )
+
+    payload = _payload_from_database(db_path=db_path, limit=50)
+
+    assert [signal.title for signal in payload["hackathon_radar"]["signals"]] == ["Fresh Hackathon"]
+    assert payload["briefing"]["source_counts"] == {"Crawler": 1}
+
+
 def test_streamlit_app_import_is_side_effect_safe():
     import dashboard.app as app
 
@@ -355,6 +404,65 @@ def test_dashboard_public_payload_helpers_strip_scores_and_link_columns():
     assert _public_json({"score": 94, "nested": {"domain_score": 10, "note": "scored 94/100 today"}}) == {
         "nested": {"note": "today"}
     }
+
+
+def test_radar_search_analysis_helpers_render_readable_tables():
+    from dashboard.app import (
+        _query_analysis_overview_frame,
+        _query_deep_dive_frame,
+        _query_top_results_frame,
+    )
+    from internet_radar.storage.models import SignalRecord
+
+    signals = [
+        SignalRecord(
+            id="sig-1",
+            topic="browser agents",
+            title="Browser agents are easier to debug",
+            source="GitHub Search",
+            category="code",
+            url="https://github.com/example/browser-agent",
+            score=88,
+        )
+    ]
+    analysis = {
+        "browser agents": {
+            "query": "browser agents",
+            "matching_signals": 1,
+            "source_count": 1,
+            "top_categories": ["code"],
+            "top_sources": ["GitHub Search"],
+            "total_velocity": 1200,
+            "personal_relevance": 76,
+            "top_results": ["sig-1"],
+            "deep_dive": {
+                "executive_summary": "One strong developer tooling signal.",
+                "opportunities": ["Build a debugging workflow"],
+                "risks": ["Validate freshness"],
+                "suggested_actions": ["Open the linked repo"],
+            },
+        }
+    }
+
+    overview = _query_analysis_overview_frame(analysis)
+    deep_dive = _query_deep_dive_frame(analysis)
+    top_results = _query_top_results_frame(analysis, signals)
+
+    assert list(overview.columns) == ["query", "matches", "sources", "categories", "top_sources", "velocity", "personal_relevance"]
+    assert overview.iloc[0]["categories"] == "code"
+    assert "Build a debugging workflow" in deep_dive.iloc[0]["opportunities"]
+    assert top_results.iloc[0]["topic"] == "browser agents"
+    assert top_results.iloc[0]["url"] == "https://github.com/example/browser-agent"
+
+
+def test_radar_search_page_does_not_dump_query_analysis_json():
+    from pathlib import Path
+
+    source = Path("dashboard/app.py").read_text()
+
+    assert "st.json(_public_json(page_payload.get(\"query_analysis\"" not in source
+    assert "_query_analysis_overview_frame" in source
+    assert "_query_deep_dive_frame" in source
 
 
 def test_dashboard_report_and_source_health_frames():

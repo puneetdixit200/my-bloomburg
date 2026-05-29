@@ -14,6 +14,7 @@ from internet_radar.brain.idea_validator import validate_ideas
 from internet_radar.brain.llm_router import LLMRouter
 from internet_radar.brain.summarizer import summarize_signals
 from internet_radar.brain.trend_predictor import predict_trend, predict_trends
+from internet_radar.signals.freshness import filter_fresh_signals
 from internet_radar.storage.models import SignalRecord, UserProfile
 
 
@@ -27,6 +28,7 @@ def build_analysis_artifacts(
 ) -> dict[str, Any]:
     profile = profile or UserProfile()
     router = router or LLMRouter()
+    signals = filter_fresh_signals(signals)
     gap_analyses = analyze_gaps(signals, router=router)
     idea_inputs = [analysis.startup_ideas[0].idea for analysis in gap_analyses if analysis.startup_ideas]
     trend_predictions = predict_trends(signals, router=router)

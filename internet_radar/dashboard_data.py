@@ -23,6 +23,7 @@ from internet_radar.search.radar_search import analyze_query
 from internet_radar.signals.academic_signal import build_academic_signals
 from internet_radar.signals.crowd_predictor import predict_crowd
 from internet_radar.signals.cross_source_multiplier import build_source_agreements
+from internet_radar.signals.freshness import filter_fresh_signals
 from internet_radar.signals.funding_signal import build_funding_signals
 from internet_radar.signals.gap_finder import find_startup_gaps
 from internet_radar.signals.sentiment_pipeline import enrich_signals_with_sentiment, summarize_sentiment
@@ -62,6 +63,7 @@ def build_dashboard_payload(
     historical_trends: list[HistoricalTrend] | None = None,
     analysis_artifacts: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
+    signals = filter_fresh_signals(signals)
     by_category: dict[str, list[SignalRecord]] = defaultdict(list)
     profile = profile or UserProfile()
     enrich_signals_with_sentiment(signals)

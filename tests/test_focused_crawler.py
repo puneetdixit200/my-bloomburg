@@ -111,6 +111,45 @@ def test_focused_web_crawler_respects_robots_and_does_not_store_raw_html():
     assert records[0].metadata["text_chars"] > 0
 
 
+def test_focused_web_crawler_rejects_stale_published_pages(monkeypatch):
+    from internet_radar.collectors.focused_crawler import CrawlSeed, FocusedWebCrawlerCollector
+
+    monkeypatch.setenv("INTERNET_RADAR_SIGNAL_MAX_AGE_DAYS", "14")
+
+    class FakeResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/robots.txt"):
+            return FakeResponse("User-agent: *\nAllow: /\n")
+        return FakeResponse(
+            """
+            <html>
+              <head>
+                <title>Old Hackathon Listing</title>
+                <meta property="article:published_time" content="2024-01-01T00:00:00Z">
+              </head>
+              <main>Old hackathon opportunity that should not be used.</main>
+            </html>
+            """
+        )
+
+    collector = FocusedWebCrawlerCollector(
+        seeds=[CrawlSeed(name="Old Seed", url="https://example.com/old", category="hackathons")],
+        max_total_pages=1,
+        max_pages_per_seed=1,
+        respect_robots=True,
+    )
+    collector.http_get = fake_get
+    collector.rate_limiter = None
+
+    assert collector.collect() == []
+
+
 def test_focused_crawler_is_part_of_free_live_collectors(monkeypatch):
     from internet_radar.collectors.focused_crawler import FocusedWebCrawlerCollector
     from internet_radar.collectors.live import default_collectors

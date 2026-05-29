@@ -34,6 +34,7 @@ from internet_radar.config.settings import load_user_profile
 from internet_radar.dashboard_data import PAGE_DEFINITIONS, build_dashboard_payload
 from internet_radar.operations.readiness import build_make_real_readiness, readiness_frame
 from internet_radar.pipeline import run_radar_once
+from internet_radar.signals.freshness import filter_fresh_signals, freshness_cutoff
 from internet_radar.sources.registry import SOURCE_REGISTRY
 from internet_radar.storage.analytics import compute_signal_analytics
 from internet_radar.storage.db import RadarStore
@@ -554,6 +555,61 @@ def _skill_recommendations_to_frame(recommendations: list[object]) -> pd.DataFra
     )
 
 
+def _query_analysis_overview_frame(query_analysis: dict[str, object]) -> pd.DataFrame:
+    rows = []
+    for query, analysis in query_analysis.items():
+        if not isinstance(analysis, dict):
+            continue
+        rows.append(
+            {
+                "query": query,
+                "matches": int(analysis.get("matching_signals") or 0),
+                "sources": int(analysis.get("source_count") or 0),
+                "categories": ", ".join(str(item) for item in analysis.get("top_categories") or []),
+                "top_sources": ", ".join(str(item) for item in analysis.get("top_sources") or []),
+                "velocity": _format_count(analysis.get("total_velocity") or 0),
+                "personal_relevance": int(analysis.get("personal_relevance") or 0),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _query_deep_dive_frame(query_analysis: dict[str, object]) -> pd.DataFrame:
+    rows = []
+    for query, analysis in query_analysis.items():
+        if not isinstance(analysis, dict):
+            continue
+        deep_dive = analysis.get("deep_dive")
+        if not isinstance(deep_dive, dict):
+            continue
+        rows.append(
+            {
+                "query": query,
+                "summary": _public_text(deep_dive.get("executive_summary") or ""),
+                "opportunities": " | ".join(_public_text(item) for item in deep_dive.get("opportunities") or []),
+                "risks": " | ".join(_public_text(item) for item in deep_dive.get("risks") or []),
+                "actions": " | ".join(_public_text(item) for item in deep_dive.get("suggested_actions") or []),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _query_top_results_frame(query_analysis: dict[str, object], signals: list[SignalRecord]) -> pd.DataFrame:
+    by_id = {str(signal.id): signal for signal in signals}
+    ordered: list[SignalRecord] = []
+    seen: set[str] = set()
+    for analysis in query_analysis.values():
+        if not isinstance(analysis, dict):
+            continue
+        for signal_id in analysis.get("top_results") or []:
+            key = str(signal_id)
+            if key in seen or key not in by_id:
+                continue
+            seen.add(key)
+            ordered.append(by_id[key])
+    return _signal_preview_frame(ordered, limit=12)
+
+
 def _source_agreements_to_frame(agreements: list[object]) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -824,9 +880,20 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
         return
 
     if page_key == "radar_search":
-        st.text_input("Search collected signals", value=str((filters or {}).get("query") or "browser agents"), key="radar-search-query")
-        with st.expander("Query Analysis", expanded=True):
-            st.json(_public_json(page_payload.get("query_analysis", {})))
+        search_query = st.text_input("Search collected signals", value=str((filters or {}).get("query") or "browser agents"), key="radar-search-query")
+        filters = {**(filters or {}), "query": search_query}
+        query_analysis = page_payload.get("query_analysis", {})
+        if isinstance(query_analysis, dict) and query_analysis:
+            _render_section_header("Query Coverage", "matches, sources, and categories")
+            _render_table(_query_analysis_overview_frame(query_analysis))
+            deep_dive_frame = _query_deep_dive_frame(query_analysis)
+            if not deep_dive_frame.empty:
+                _render_section_header("Deep Dive", "opportunities, risks, and next actions")
+                _render_table(deep_dive_frame)
+            top_results = _query_top_results_frame(query_analysis, signals)
+            if not top_results.empty:
+                _render_section_header("Top Search Results", "matched signals")
+                _render_table(top_results)
 
     if page_key == "briefing":
         analysis_artifacts = page_payload.get("analysis_artifacts", {})
@@ -1134,7 +1201,9 @@ def load_database_payload(refresh_token: int = 0, db_path: str | None = None) ->
 
 def _payload_from_database(db_path: str | Path | None = None, limit: int | None = None) -> dict[str, dict[str, object]]:
     store = RadarStore(db_path or os.getenv("INTERNET_RADAR_DB", "data/radar.sqlite"))
-    signals = store.list_signals(limit=limit or _database_signal_limit())
+    signals = filter_fresh_signals(
+        store.list_signals(limit=limit or _database_signal_limit(), since=freshness_cutoff())
+    )
     source_counts = dict(Counter(signal.source for signal in signals))
     source_health = {source: f"database ({count})" for source, count in source_counts.items()}
     return build_dashboard_payload(

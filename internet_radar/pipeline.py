@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
@@ -11,6 +12,7 @@ from internet_radar.collectors.live import default_collectors
 from internet_radar.collectors.runner import collect_from_sources
 from internet_radar.config.settings import load_user_profile
 from internet_radar.signals.deduplicator import deduplicate_signals
+from internet_radar.signals.freshness import filter_fresh_signals, freshness_cutoff
 from internet_radar.signals.velocity_engine import apply_historical_velocity, historical_trends_for_signals
 from internet_radar.storage.db import create_store
 from internet_radar.storage.models import BriefingPayload, SignalRecord
@@ -31,13 +33,18 @@ def run_radar_once(
         use_live_network = os.getenv("INTERNET_RADAR_USE_LIVE", "0") == "1"
 
     selected_collectors = collectors or default_collectors(use_live_network=use_live_network)
-    collector_results = collect_from_sources(selected_collectors)
+    collector_results = []
+    for result in collect_from_sources(selected_collectors):
+        fresh_result_signals = filter_fresh_signals(result.signals, now=run_observed_at)
+        collector_results.append(
+            replace(result, signals=fresh_result_signals, status=_fresh_result_status(result.status, len(fresh_result_signals)))
+        )
     source_health = {result.name: result.status for result in collector_results}
     source_counts = {result.name: len(result.signals) for result in collector_results}
     source_durations = {result.name: result.duration_seconds for result in collector_results}
     signals = [signal for result in collector_results for signal in result.signals]
 
-    deduped = deduplicate_signals(signals)
+    deduped = filter_fresh_signals(deduplicate_signals(signals), now=run_observed_at)
     store = create_store(db_path or os.getenv("INTERNET_RADAR_DB", "data/radar.sqlite"))
     store.upsert_signals(deduped)
     if hasattr(store, "record_signal_snapshots"):
@@ -46,7 +53,10 @@ def run_radar_once(
     apply_historical_velocity(deduped, historical_trends)
     if historical_trends:
         store.upsert_signals(deduped)
-    top_signals = store.list_signals(limit=_dashboard_signal_limit())
+    top_signals = filter_fresh_signals(
+        store.list_signals(limit=_signal_candidate_limit(), since=freshness_cutoff(run_observed_at)),
+        now=run_observed_at,
+    )[: _dashboard_signal_limit()]
     router = LLMRouter()
     llm_choice = router.route("classify", content_length=120)
     active_sources = sum(1 for status in source_health.values() if not status.startswith("error"))
@@ -79,3 +89,17 @@ def _dashboard_signal_limit() -> int:
         return max(100, int(os.getenv("INTERNET_RADAR_DASHBOARD_SIGNAL_LIMIT", str(DEFAULT_DASHBOARD_SIGNAL_LIMIT))))
     except ValueError:
         return DEFAULT_DASHBOARD_SIGNAL_LIMIT
+
+
+def _signal_candidate_limit() -> int:
+    try:
+        return max(_dashboard_signal_limit(), int(os.getenv("INTERNET_RADAR_SIGNAL_CANDIDATE_LIMIT", "5000")))
+    except ValueError:
+        return 5000
+
+
+def _fresh_result_status(status: str, count: int) -> str:
+    if status.startswith("error"):
+        return status
+    mode = "fallback" if status.startswith("fallback") else "live"
+    return f"{mode} ({count})"

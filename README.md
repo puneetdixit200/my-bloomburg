@@ -56,7 +56,10 @@ export INTERNET_RADAR_CRAWLER_MAX_TOTAL_PAGES=200
 export INTERNET_RADAR_CRAWLER_MAX_PAGES_PER_SEED=20
 export INTERNET_RADAR_CRAWLER_RESPECT_ROBOTS=1
 export INTERNET_RADAR_CRAWLER_TIMEOUT_SECONDS=20
+export INTERNET_RADAR_SIGNAL_MAX_AGE_DAYS=14
 ```
+
+Signals older than `INTERNET_RADAR_SIGNAL_MAX_AGE_DAYS` are excluded before storage-backed dashboard views and LLM analysis. Crawler pages with stale published dates or expired deadlines are rejected even if they were crawled today.
 
 No-key Reddit JSON scanning runs even without OAuth credentials. Tune it with:
 

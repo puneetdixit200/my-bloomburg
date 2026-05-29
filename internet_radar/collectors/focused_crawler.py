@@ -15,6 +15,7 @@ from scrapy.http import HtmlResponse
 from scrapy.linkextractors import LinkExtractor
 
 from internet_radar.collectors.base import HTTPCollector
+from internet_radar.signals.freshness import is_signal_fresh, parse_datetime_value
 from internet_radar.storage.models import Category, SignalRecord
 
 
@@ -52,6 +53,8 @@ class CrawledPage:
     text: str
     links: list[str]
     content_hash: str
+    published_at: str = ""
+    expires_at: str = ""
 
 
 class FocusedWebCrawlerCollector(HTTPCollector):
@@ -96,9 +99,11 @@ class FocusedWebCrawlerCollector(HTTPCollector):
                 except Exception:
                     continue
                 if page.title or page.text:
-                    records.append(crawled_page_to_signal(page, seed))
-                    seed_pages += 1
-                    total_pages += 1
+                    signal = crawled_page_to_signal(page, seed)
+                    if is_signal_fresh(signal):
+                        records.append(signal)
+                        seed_pages += 1
+                        total_pages += 1
                 if seed.follow_links:
                     queue.extend(
                         link
@@ -158,7 +163,15 @@ def extract_crawled_page(html_text: str, url: str, seed: CrawlSeed | None = None
     text = _compact_text(text)
     links = _extract_links(response, seed)
     content_hash = hashlib.sha1(f"{url}|{title}|{text[:4000]}".encode("utf-8")).hexdigest()
-    return CrawledPage(url=url, title=title, text=text, links=links, content_hash=content_hash)
+    return CrawledPage(
+        url=url,
+        title=title,
+        text=text,
+        links=links,
+        content_hash=content_hash,
+        published_at=_extract_page_date(response, "content"),
+        expires_at=_extract_page_date(response, "expiry"),
+    )
 
 
 def crawled_page_to_signal(page: CrawledPage, seed: CrawlSeed) -> SignalRecord:
@@ -181,6 +194,8 @@ def crawled_page_to_signal(page: CrawledPage, seed: CrawlSeed) -> SignalRecord:
             "text_chars": len(text),
             "links_found": len(page.links),
             "extractor": "scrapy+trafilatura",
+            "published_at": page.published_at,
+            "expires_at": page.expires_at,
         },
     )
 
@@ -217,6 +232,32 @@ def _extract_links(response: HtmlResponse, seed: CrawlSeed | None) -> list[str]:
         if normalized.startswith(("http://", "https://")):
             links.append(normalized)
     return links
+
+
+def _extract_page_date(response: HtmlResponse, kind: str) -> str:
+    if kind == "expiry":
+        selectors = [
+            "meta[name='expires']::attr(content)",
+            "meta[property='article:expiration_time']::attr(content)",
+            "meta[name='deadline']::attr(content)",
+            "time[itemprop='endDate']::attr(datetime)",
+        ]
+    else:
+        selectors = [
+            "meta[property='article:published_time']::attr(content)",
+            "meta[name='article:published_time']::attr(content)",
+            "meta[name='pubdate']::attr(content)",
+            "meta[name='publishdate']::attr(content)",
+            "meta[name='date']::attr(content)",
+            "meta[itemprop='datePublished']::attr(content)",
+            "time[datetime]::attr(datetime)",
+        ]
+    for selector in selectors:
+        value = response.css(selector).get()
+        parsed = parse_datetime_value(value, end_of_day=kind == "expiry")
+        if parsed is not None:
+            return parsed.isoformat()
+    return ""
 
 
 def _scrapy_text_fallback(response: HtmlResponse) -> str:
