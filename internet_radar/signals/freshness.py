@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 from datetime import UTC, date, datetime, time, timedelta
@@ -36,8 +37,30 @@ EXPIRY_DATE_KEYS = (
     "closeDate",
     "end_date",
     "end_time",
+    "ends_at",
+    "endsAt",
     "until",
     "apply_by",
+)
+HACKATHON_DAYS_LEFT_KEYS = (
+    "days_left",
+    "deadline_days",
+    "days_until_deadline",
+    "days_until_start",
+)
+HACKATHON_RELATIVE_SECONDS_KEYS = (
+    "starts_in_seconds",
+    "seconds_until_start",
+    "seconds_until_deadline",
+)
+HACKATHON_ACTIONABLE_DATE_KEYS = (
+    *EXPIRY_DATE_KEYS,
+    "start_at",
+    "starts_at",
+    "startsAt",
+    "start_date",
+    "start_time",
+    "startTime",
 )
 
 
@@ -83,6 +106,9 @@ def is_signal_fresh(
     if expiry_date and expiry_date < current:
         return False
 
+    if signal.category == "hackathons" and signal_hackathon_deadline_datetime(signal.metadata, now=current) is None:
+        return False
+
     return True
 
 
@@ -92,6 +118,34 @@ def signal_content_datetime(metadata: dict[str, Any]) -> datetime | None:
 
 def signal_expiry_datetime(metadata: dict[str, Any]) -> datetime | None:
     return _first_datetime(metadata, EXPIRY_DATE_KEYS, end_of_day=True)
+
+
+def signal_hackathon_deadline_datetime(metadata: dict[str, Any], *, now: datetime | None = None) -> datetime | None:
+    current = _aware(now or datetime.now(UTC))
+
+    days_left = _first_positive_int(metadata, HACKATHON_DAYS_LEFT_KEYS)
+    if days_left is not None:
+        return current + timedelta(days=days_left)
+
+    seconds_left = _first_positive_int(metadata, HACKATHON_RELATIVE_SECONDS_KEYS)
+    if seconds_left is not None:
+        return current + timedelta(seconds=seconds_left)
+
+    deadline = _first_datetime(metadata, HACKATHON_ACTIONABLE_DATE_KEYS, end_of_day=True)
+    if deadline is None or deadline < current:
+        return None
+    return deadline
+
+
+def signal_hackathon_days_left(metadata: dict[str, Any], *, now: datetime | None = None) -> int | None:
+    current = _aware(now or datetime.now(UTC))
+    explicit_days = _first_positive_int(metadata, HACKATHON_DAYS_LEFT_KEYS)
+    if explicit_days is not None:
+        return explicit_days
+    deadline = signal_hackathon_deadline_datetime(metadata, now=current)
+    if deadline is None:
+        return None
+    return max(1, math.ceil((deadline - current).total_seconds() / 86_400))
 
 
 def parse_datetime_value(value: Any, *, end_of_day: bool = False) -> datetime | None:
@@ -155,6 +209,22 @@ def _first_datetime(metadata: dict[str, Any], keys: tuple[str, ...], *, end_of_d
         if parsed is not None:
             return parsed
     return None
+
+
+def _first_positive_int(metadata: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+    for key in keys:
+        parsed = _positive_int(metadata.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(float(str(value).replace(",", "")))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _aware(value: datetime) -> datetime:

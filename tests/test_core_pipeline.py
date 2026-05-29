@@ -247,6 +247,52 @@ def test_pipeline_excludes_stale_database_signals_from_dashboard_and_llm(tmp_pat
     assert captured["titles"] == ["Fresh lower score should appear"]
 
 
+def test_pipeline_excludes_hackathons_without_actionable_deadlines(tmp_path, monkeypatch):
+    from internet_radar.pipeline import run_radar_once
+    from internet_radar.storage.models import SignalRecord
+
+    now = datetime(2026, 5, 29, tzinfo=UTC)
+    captured: dict[str, object] = {}
+
+    def fake_artifacts(signals, **kwargs):
+        captured["titles"] = [signal.title for signal in signals]
+        return {}
+
+    monkeypatch.setattr("internet_radar.pipeline.build_analysis_artifacts", fake_artifacts)
+
+    class HackathonCollector:
+        name = "Hackathon Source"
+        category = "hackathons"
+
+        def collect(self):
+            return [
+                SignalRecord(
+                    id="missing:1",
+                    topic="missing deadline",
+                    title="Missing deadline should not appear",
+                    source=self.name,
+                    category=self.category,
+                    score=100,
+                    observed_at=now,
+                ),
+                SignalRecord(
+                    id="future:1",
+                    topic="future deadline",
+                    title="Future deadline should appear",
+                    source=self.name,
+                    category=self.category,
+                    score=50,
+                    observed_at=now,
+                    metadata={"deadline": "2026-06-05"},
+                ),
+            ]
+
+    result = run_radar_once(collectors=[HackathonCollector()], db_path=tmp_path / "radar.sqlite", use_live_network=False, now=now)
+
+    assert [signal.title for signal in result.top_signals] == ["Future deadline should appear"]
+    assert captured["titles"] == ["Future deadline should appear"]
+
+
 def test_pipeline_keeps_running_when_one_collector_fails(tmp_path):
     from internet_radar.pipeline import run_radar_once
     from internet_radar.storage.models import SignalRecord
@@ -319,6 +365,7 @@ def test_pipeline_keeps_lower_scored_category_signals_for_dashboard_tabs(tmp_pat
                     source=self.name,
                     category=self.category,
                     score=65,
+                    metadata={"days_left": 7},
                 )
             ]
 

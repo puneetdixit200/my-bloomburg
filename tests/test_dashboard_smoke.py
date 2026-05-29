@@ -53,15 +53,26 @@ def test_sample_payload_has_hackathon_radar_signal(tmp_path):
 
 
 def test_dashboard_database_recheck_payload_reads_sqlite_signals(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
     from dashboard.app import _payload_from_database
     from internet_radar.storage.db import RadarStore
     from internet_radar.storage.models import SignalRecord
 
     db_path = tmp_path / "radar.sqlite"
+    deadline = (datetime.now(UTC) + timedelta(days=7)).date().isoformat()
     store = RadarStore(db_path)
     store.upsert_signals(
         [
-            SignalRecord(id="hack", topic="student hackathon", title="Student AI Hackathon", source="Devpost", category="hackathons", score=88),
+            SignalRecord(
+                id="hack",
+                topic="student hackathon",
+                title="Student AI Hackathon",
+                source="Devpost",
+                category="hackathons",
+                score=88,
+                metadata={"deadline": deadline},
+            ),
             SignalRecord(id="repo", topic="mcp", title="MCP repo", source="GitHub", category="code", score=84),
         ]
     )
@@ -105,6 +116,15 @@ def test_dashboard_database_recheck_filters_expired_and_stale_signals(tmp_path, 
                 metadata={"deadline": (now - timedelta(days=1)).date().isoformat()},
             ),
             SignalRecord(
+                id="missing-deadline",
+                topic="unknown hackathon",
+                title="Missing Deadline Hackathon",
+                source="Crawler",
+                category="hackathons",
+                score=98,
+                observed_at=now,
+            ),
+            SignalRecord(
                 id="fresh",
                 topic="fresh hackathon",
                 title="Fresh Hackathon",
@@ -120,6 +140,7 @@ def test_dashboard_database_recheck_filters_expired_and_stale_signals(tmp_path, 
     payload = _payload_from_database(db_path=db_path, limit=50)
 
     assert [signal.title for signal in payload["hackathon_radar"]["signals"]] == ["Fresh Hackathon"]
+    assert all(prediction.recommendation != "EXPIRED" for prediction in payload["hackathon_radar"]["crowd_predictions"])
     assert payload["briefing"]["source_counts"] == {"Crawler": 1}
 
 

@@ -21,9 +21,9 @@ from internet_radar.scoring.startup_gap_scorer import StartupGapScorer
 from internet_radar.scoring.trend_scorer import TrendScorer
 from internet_radar.search.radar_search import analyze_query
 from internet_radar.signals.academic_signal import build_academic_signals
-from internet_radar.signals.crowd_predictor import predict_crowd
+from internet_radar.signals.crowd_predictor import CrowdPrediction, predict_crowd
 from internet_radar.signals.cross_source_multiplier import build_source_agreements
-from internet_radar.signals.freshness import filter_fresh_signals
+from internet_radar.signals.freshness import filter_fresh_signals, signal_hackathon_days_left
 from internet_radar.signals.funding_signal import build_funding_signals
 from internet_radar.signals.gap_finder import find_startup_gaps
 from internet_radar.signals.sentiment_pipeline import enrich_signals_with_sentiment, summarize_sentiment
@@ -87,9 +87,11 @@ def build_dashboard_payload(
     academic_signals = build_academic_signals(all_signals)
     funding_signals = build_funding_signals(all_signals)
     crowd_predictions = [
-        predict_crowd({"title": signal.title, **signal.metadata})
+        prediction
         for signal in all_signals
         if signal.category == "hackathons"
+        for prediction in [_crowd_prediction_for_signal(signal)]
+        if prediction is not None and prediction.recommendation != "EXPIRED"
     ]
     signal_summary = summarize_signals(all_signals, router=router)
     classifications = classify_signals(all_signals, router=router, allow_network=False)
@@ -174,6 +176,13 @@ def _artifact_value(analysis_artifacts: dict[str, Any], key: str, fallback: Any)
     return analysis_artifacts[key] if key in analysis_artifacts else fallback
 
 
+def _crowd_prediction_for_signal(signal: SignalRecord) -> CrowdPrediction | None:
+    days_left = signal_hackathon_days_left(signal.metadata)
+    if days_left is None:
+        return None
+    return predict_crowd({"title": signal.title, **signal.metadata, "days_left": days_left})
+
+
 def enrich_domain_scores(signals: list[SignalRecord], profile: UserProfile | None = None) -> None:
     profile = profile or UserProfile()
     profile_data = profile.model_dump()
@@ -196,6 +205,9 @@ def enrich_domain_scores(signals: list[SignalRecord], profile: UserProfile | Non
             signal.metadata["funding_components"] = result.components
             signal.metadata["market_validation"] = result.market_validation
         elif signal.category == "hackathons":
+            days_left = signal_hackathon_days_left(signal.metadata)
+            if days_left is not None:
+                signal.metadata["days_left"] = days_left
             result = hackathon_scorer.score({"theme": signal.topic, "title": signal.title, **signal.metadata}, profile_data)
             signal.metadata["hackathon_score"] = result.score
             signal.metadata["hackathon_components"] = result.components

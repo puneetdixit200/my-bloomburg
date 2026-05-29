@@ -3108,6 +3108,7 @@ def sample_signals(category: str) -> list[SignalRecord]:
             score=score,
             velocity=max(score - 50, 1),
             observed_at=now,
+            metadata={"days_left": 7} if category == "hackathons" else {},
         )
         for index, (topic, title, source, score, url) in enumerate(samples.get(category, []))
     ]
