@@ -18,6 +18,7 @@ def test_streamlit_app_renders_all_tabs_without_exceptions(tmp_path, monkeypatch
     assert "score-badge" not in markdown
     assert "radar-table" in markdown
     assert "section-header" in markdown
+    assert [button.label for button in app.button].count("RECHECK DATABASE") == 12
     assert [tab.label for tab in app.tabs] == [
         "Morning Intelligence Briefing",
         "GitHub Radar",

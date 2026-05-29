@@ -52,6 +52,28 @@ def test_sample_payload_has_hackathon_radar_signal(tmp_path):
     assert payload["hackathon_radar"]["signals"][0].category == "hackathons"
 
 
+def test_dashboard_database_recheck_payload_reads_sqlite_signals(tmp_path):
+    from dashboard.app import _payload_from_database
+    from internet_radar.storage.db import RadarStore
+    from internet_radar.storage.models import SignalRecord
+
+    db_path = tmp_path / "radar.sqlite"
+    store = RadarStore(db_path)
+    store.upsert_signals(
+        [
+            SignalRecord(id="hack", topic="student hackathon", title="Student AI Hackathon", source="Devpost", category="hackathons", score=88),
+            SignalRecord(id="repo", topic="mcp", title="MCP repo", source="GitHub", category="code", score=84),
+        ]
+    )
+
+    payload = _payload_from_database(db_path=db_path, limit=50)
+
+    assert payload["hackathon_radar"]["signals"][0].title == "Student AI Hackathon"
+    assert payload["github_radar"]["signals"][0].title == "MCP repo"
+    assert payload["briefing"]["collection"]["mode"] == "live"
+    assert payload["briefing"]["source_counts"] == {"Devpost": 1, "GitHub": 1}
+
+
 def test_streamlit_app_import_is_side_effect_safe():
     import dashboard.app as app
 

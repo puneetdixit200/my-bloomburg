@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from html import escape
@@ -35,6 +36,7 @@ from internet_radar.operations.readiness import build_make_real_readiness, readi
 from internet_radar.pipeline import run_radar_once
 from internet_radar.sources.registry import SOURCE_REGISTRY
 from internet_radar.storage.analytics import compute_signal_analytics
+from internet_radar.storage.db import RadarStore
 from internet_radar.storage.models import BriefingPayload, SignalRecord
 from internet_radar.storage.payload_cache import load_briefing_payload, payload_cache_age_seconds, save_briefing_payload
 
@@ -344,6 +346,23 @@ def _public_json(value: object) -> object:
 
 def _render_section_header(title: str, detail: str = "") -> None:
     st.markdown(section_header_html(title, detail), unsafe_allow_html=True)
+
+
+def _maybe_recheck_page_from_database(page_key: str, page_payload: dict[str, object]) -> dict[str, object]:
+    if not st.button("RECHECK DATABASE", key=f"db-recheck-{page_key}", use_container_width=False):
+        return page_payload
+    token_key = f"db_recheck_token_{page_key}"
+    token = int(st.session_state.get(token_key, 0)) + 1
+    st.session_state[token_key] = token
+    load_database_payload.clear()
+    payload = load_database_payload(refresh_token=token)
+    refreshed = payload.get(page_key)
+    if not refreshed:
+        st.warning("Database rechecked, but this page was not found in the rebuilt payload.")
+        return page_payload
+    signal_count = len(list(refreshed.get("signals", [])))
+    st.success(f"Database rechecked: {signal_count} signals loaded for this page.")
+    return refreshed
 
 
 def _signal_action(signal: SignalRecord) -> str:
@@ -775,6 +794,7 @@ def _public_signal_json(signal: SignalRecord) -> dict[str, object]:
 
 
 def render_page(page_key: str, page_payload: dict[str, object], filters: dict[str, Any] | None = None) -> None:
+    page_payload = _maybe_recheck_page_from_database(page_key, page_payload)
     _render_section_header(str(page_payload["title"]).upper(), str(page_payload["description"]))
     signals = list(page_payload.get("signals", []))
     if page_key != "profile":
@@ -1097,6 +1117,36 @@ def _payload_from_briefing(briefing: BriefingPayload) -> dict[str, dict[str, obj
         source_durations_seconds=briefing.source_durations_seconds,
         historical_trends=briefing.historical_trends,
         analysis_artifacts=briefing.analysis_artifacts,
+    )
+
+
+def _database_signal_limit() -> int:
+    try:
+        return max(1, int(os.getenv("INTERNET_RADAR_DB_RECHECK_LIMIT", "5000")))
+    except ValueError:
+        return 5000
+
+
+@st.cache_data(ttl=60, show_spinner="Rechecking database signals...")
+def load_database_payload(refresh_token: int = 0, db_path: str | None = None) -> dict[str, dict[str, object]]:
+    return _payload_from_database(db_path=db_path, limit=_database_signal_limit())
+
+
+def _payload_from_database(db_path: str | Path | None = None, limit: int | None = None) -> dict[str, dict[str, object]]:
+    store = RadarStore(db_path or os.getenv("INTERNET_RADAR_DB", "data/radar.sqlite"))
+    signals = store.list_signals(limit=limit or _database_signal_limit())
+    source_counts = dict(Counter(signal.source for signal in signals))
+    source_health = {source: f"database ({count})" for source, count in source_counts.items()}
+    return build_dashboard_payload(
+        signals,
+        active_sources=len(source_counts),
+        generated_at=datetime.now(UTC),
+        collection_duration_seconds=0.0,
+        collection_mode="live" if signals else "sample",
+        loaded_from_cache=False,
+        source_health=source_health,
+        source_counts=source_counts,
+        source_durations_seconds={source: 0.0 for source in source_counts},
     )
 
 
