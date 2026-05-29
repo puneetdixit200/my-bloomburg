@@ -133,6 +133,7 @@ def test_dashboard_payload_enriches_split_scoring_metadata():
     )
 
     assert payload["hackathon_radar"]["signals"][0].metadata["hackathon_score"] >= 85
-    assert payload["internship_radar"]["signals"][0].metadata["internship_score"] > 70
+    job_signal = next(signal for signal in payload["skill_radar"]["signals"] if signal.category == "jobs")
+    assert job_signal.metadata["internship_score"] > 70
     assert payload["startup_gaps"]["signals"][0].metadata["startup_gap_score"] >= 65
     assert payload["github_radar"]["signals"][0].metadata["trend_score"] >= 85

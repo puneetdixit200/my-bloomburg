@@ -4,12 +4,11 @@ from __future__ import annotations
 def test_dashboard_has_all_architecture_pages():
     from internet_radar.dashboard_data import PAGE_DEFINITIONS
 
-    assert len(PAGE_DEFINITIONS) == 13
+    assert len(PAGE_DEFINITIONS) == 12
     assert [page.key for page in PAGE_DEFINITIONS] == [
         "briefing",
         "github_radar",
         "hackathon_radar",
-        "internship_radar",
         "startup_gaps",
         "trend_velocity",
         "research_radar",
@@ -37,7 +36,7 @@ def test_dashboard_payload_groups_signals_by_page():
 
     assert payload["briefing"]["active_sources"] == 9
     assert payload["github_radar"]["signals"][0].source == "GitHub"
-    assert payload["internship_radar"]["signals"][0].category == "jobs"
+    assert "internship_radar" not in payload
     assert payload["research_radar"]["signals"][0].category == "research"
     assert "collection" in payload["briefing"]
 

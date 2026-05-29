@@ -35,7 +35,6 @@ PAGE_DEFINITIONS = [
     PageDefinition(key="briefing", title="Morning Intelligence Briefing", category="all", description="Daily ranked signal summary."),
     PageDefinition(key="github_radar", title="GitHub Radar", category="code", description="Repository and package velocity."),
     PageDefinition(key="hackathon_radar", title="Hackathon Radar", category="hackathons", description="Hackathon opportunity scoring."),
-    PageDefinition(key="internship_radar", title="Internship Radar", category="jobs", description="Fresh jobs and skill match."),
     PageDefinition(key="startup_gaps", title="Startup Gap Finder", category="mixed", description="Pain signals and product gaps."),
     PageDefinition(key="trend_velocity", title="Multi-Source Trend Velocity", category="all", description="Cross-source trend momentum."),
     PageDefinition(key="research_radar", title="Research Radar", category="research", description="Academic momentum and future demand."),

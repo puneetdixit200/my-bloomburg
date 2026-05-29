@@ -22,7 +22,6 @@ def test_streamlit_app_renders_all_tabs_without_exceptions(tmp_path, monkeypatch
         "Morning Intelligence Briefing",
         "GitHub Radar",
         "Hackathon Radar",
-        "Internship Radar",
         "Startup Gap Finder",
         "Multi-Source Trend Velocity",
         "Research Radar",

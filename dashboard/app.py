@@ -47,7 +47,6 @@ SIDEBAR_NAV_ITEMS = [
     (_PAGES_DIR / "00_briefing.py", "BRIEFING"),
     (_PAGES_DIR / "01_github_radar.py", "GITHUB RADAR"),
     (_PAGES_DIR / "02_hackathon_radar.py", "HACKATHON RADAR"),
-    (_PAGES_DIR / "03_internship_radar.py", "INTERNSHIP RADAR"),
     (_PAGES_DIR / "04_startup_gaps.py", "STARTUP GAPS"),
     (_PAGES_DIR / "05_trend_velocity.py", "TREND VELOCITY"),
     (_PAGES_DIR / "06_research_radar.py", "RESEARCH RADAR"),
@@ -936,16 +935,6 @@ def render_page(page_key: str, page_payload: dict[str, object], filters: dict[st
         if predictions:
             _render_section_header("Crowd Prediction")
             _render_table(_objects_to_frame(predictions))
-
-    if page_key == "internship_radar" and signals:
-        _render_section_header("Freshness Priority")
-        buckets = _freshness_bucket_counts(signals)
-        bucket_cols = st.columns(3)
-        for column, (label, count) in zip(bucket_cols, buckets.items(), strict=True):
-            with column:
-                render_glow_metric(st, label, count, "sky")
-        _render_section_header("Apply Today", "fresh jobs and skill match")
-        _render_signal_cards(signals, limit=5)
 
     if page_key == "research_radar":
         academic_signals = list(page_payload.get("academic_signals", []))
